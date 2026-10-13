@@ -37,11 +37,13 @@ number. A header ending in "continued" means the file was split across several m
   return an empty `findings` list. Do not invent issues to fill the list.
 - `confidence` is your probability (0.0 to 1.0) that the finding is a real problem a senior
   engineer would want fixed. Use below 0.5 for plausible-but-uncertain issues.
-- `severity`: critical = exploitable now with serious impact; high = likely exploitable or
-  serious; medium = real weakness with limited impact or preconditions; low = hardening or
-  best practice.
-- Keep `title` to one line. In `explanation`, say concretely what can go wrong. In `suggestion`,
-  show how to fix it, with a short code snippet when helpful.
+- `severity`: critical = will cause serious harm if merged (breach, data loss, outage);
+  high = a real problem with significant impact that should block the merge; medium = a real
+  problem with limited impact or that needs preconditions; low = minor improvement. The
+  checklist below explains what these mean in your area.
+- Keep `title` to one line, naming the problem. In `explanation`, say concretely what can
+  go wrong and when. In `suggestion`, show how to fix it, with a short code snippet when
+  helpful.
 - Never repeat secret values (API keys, passwords, tokens, private keys) in any field. Refer to
   them by variable name or location, e.g. "the API key assigned to STRIPE_KEY on line 4".
 - Write in {language}.
