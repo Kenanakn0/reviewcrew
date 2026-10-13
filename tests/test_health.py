@@ -6,11 +6,16 @@ import pytest
 from reviewcrew import __version__
 from reviewcrew.config import Settings
 from reviewcrew.main import create_app
+from reviewcrew.webhook.events import PullRequestEvent
+
+
+async def _noop_handler(event: PullRequestEvent) -> None:
+    return None
 
 
 @pytest.fixture
-async def client() -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(Settings(_env_file=None, app_env="test"))
+async def client(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
+    app = create_app(settings, pr_handler=_noop_handler)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
