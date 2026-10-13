@@ -5,14 +5,11 @@
 Uses LLM_* / ANTHROPIC_API_KEY / OPENAI_COMPAT_* from the environment or `.env`.
 """
 
-from pathlib import Path
-
 import pytest
-from pydantic import SecretStr
 
 from reviewcrew.agents.registry import AGENT_CLASSES
 from reviewcrew.agents.security import SecurityAgent
-from reviewcrew.config import Settings
+from reviewcrew.config import CoreSettings
 from reviewcrew.diff.processor import process_diff
 from reviewcrew.llm.factory import open_llm_provider
 from reviewcrew.pipeline.orchestrator import run_agents
@@ -21,14 +18,8 @@ from tests.helpers import load_diff
 pytestmark = pytest.mark.live
 
 
-async def test_security_agent_finds_sql_injection_and_hardcoded_key(tmp_path: Path) -> None:
-    key_file = tmp_path / "unused.pem"
-    key_file.write_text("unused", encoding="utf-8")
-    settings = Settings(  # LLM settings from env/.env; GitHub ones are irrelevant here
-        github_app_client_id="unused",
-        github_private_key_path=key_file,
-        github_webhook_secret=SecretStr("unused"),
-    )
+async def test_security_agent_finds_sql_injection_and_hardcoded_key() -> None:
+    settings = CoreSettings()  # LLM settings from the environment or .env
     diff = process_diff(load_diff("vulnerable.diff"))
 
     async with open_llm_provider(settings) as llm:
@@ -42,14 +33,8 @@ async def test_security_agent_finds_sql_injection_and_hardcoded_key(tmp_path: Pa
     assert ("app/settings.py", 9) in located, result.findings
 
 
-async def test_all_agents_run_against_the_real_llm(tmp_path: Path) -> None:
-    key_file = tmp_path / "unused.pem"
-    key_file.write_text("unused", encoding="utf-8")
-    settings = Settings(
-        github_app_client_id="unused",
-        github_private_key_path=key_file,
-        github_webhook_secret=SecretStr("unused"),
-    )
+async def test_all_agents_run_against_the_real_llm() -> None:
+    settings = CoreSettings()
     diff = process_diff(load_diff("vulnerable.diff"))
 
     async with open_llm_provider(settings) as llm:

@@ -19,8 +19,9 @@ def _all_agents() -> list[AgentName]:
     return ["security", "performance", "tests"]
 
 
-class Settings(BaseSettings):
-    """Runtime configuration. Secrets must only ever come from the environment or `.env`."""
+class CoreSettings(BaseSettings):
+    """Everything a review needs besides GitHub and the queue: diff handling, the LLM and
+    review policy. The evaluation runner uses this alone (no GitHub App required)."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -28,17 +29,7 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    app_env: Literal["development", "test", "production"] = "development"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    host: str = "127.0.0.1"
-    port: int = Field(default=8000, ge=1, le=65535)
-
-    # GitHub App credentials (Settings -> Developer settings -> GitHub Apps -> your app).
-    github_app_client_id: str = Field(min_length=1)
-    github_private_key_path: FilePath
-    github_webhook_secret: SecretStr = Field(min_length=1)
-    github_api_url: HttpUrl = HttpUrl("https://api.github.com")
-    github_timeout_seconds: float = Field(default=30.0, gt=0)
 
     # Diff processing.
     diff_max_tokens_per_chunk: int = Field(default=8000, ge=MIN_CHUNK_TOKENS)
@@ -71,13 +62,6 @@ class Settings(BaseSettings):
     # Tokens one PR may spend across all agents; remaining chunks are skipped beyond it.
     review_token_budget: int | None = Field(default=300_000, ge=1)
 
-    # Queue (Redis + arq).
-    redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")
-    # How long a reviewed (repo, PR, head SHA) is remembered to suppress duplicates.
-    review_dedup_ttl_seconds: int = Field(default=7 * 24 * 3600, ge=60)
-    review_job_timeout_seconds: float = Field(default=1800.0, gt=0)
-    worker_max_jobs: int = Field(default=4, ge=1)
-
     def review_options(self) -> ReviewOptions:
         return ReviewOptions(
             agents=tuple(dict.fromkeys(self.review_agents)),
@@ -90,18 +74,41 @@ class Settings(BaseSettings):
             max_concurrent_llm_calls=self.llm_max_concurrency,
         )
 
-    @model_validator(mode="after")
-    def _check_llm_provider(self) -> Self:
-        if self.llm_provider == "openai_compat" and self.openai_compat_base_url is None:
-            raise ValueError("OPENAI_COMPAT_BASE_URL is required when LLM_PROVIDER=openai_compat")
-        return self
-
     def diff_options(self) -> DiffOptions:
         return DiffOptions(
             filters=FilterConfig(max_changed_lines=self.diff_max_changed_lines_per_file),
             max_tokens_per_chunk=self.diff_max_tokens_per_chunk,
             context_lines=self.diff_context_lines,
         )
+
+    @model_validator(mode="after")
+    def _check_llm_provider(self) -> Self:
+        if self.llm_provider == "openai_compat" and self.openai_compat_base_url is None:
+            raise ValueError("OPENAI_COMPAT_BASE_URL is required when LLM_PROVIDER=openai_compat")
+        return self
+
+
+class Settings(CoreSettings):
+    """Full runtime configuration of the API and the worker. Secrets must only ever come
+    from the environment or `.env`."""
+
+    app_env: Literal["development", "test", "production"] = "development"
+    host: str = "127.0.0.1"
+    port: int = Field(default=8000, ge=1, le=65535)
+
+    # GitHub App credentials (Settings -> Developer settings -> GitHub Apps -> your app).
+    github_app_client_id: str = Field(min_length=1)
+    github_private_key_path: FilePath
+    github_webhook_secret: SecretStr = Field(min_length=1)
+    github_api_url: HttpUrl = HttpUrl("https://api.github.com")
+    github_timeout_seconds: float = Field(default=30.0, gt=0)
+
+    # Queue (Redis + arq).
+    redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")
+    # How long a reviewed (repo, PR, head SHA) is remembered to suppress duplicates.
+    review_dedup_ttl_seconds: int = Field(default=7 * 24 * 3600, ge=60)
+    review_job_timeout_seconds: float = Field(default=1800.0, gt=0)
+    worker_max_jobs: int = Field(default=4, ge=1)
 
 
 @lru_cache

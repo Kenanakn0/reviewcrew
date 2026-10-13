@@ -6,14 +6,14 @@ from contextlib import asynccontextmanager
 import anthropic
 import httpx
 
-from reviewcrew.config import Settings
+from reviewcrew.config import CoreSettings
 from reviewcrew.llm.anthropic_provider import AnthropicProvider
 from reviewcrew.llm.base import LLMProvider
 from reviewcrew.llm.openai_compat import OpenAICompatProvider
 
 
 @asynccontextmanager
-async def open_llm_provider(settings: Settings) -> AsyncIterator[LLMProvider]:
+async def open_llm_provider(settings: CoreSettings) -> AsyncIterator[LLMProvider]:
     if settings.llm_provider == "anthropic":
         api_key = settings.anthropic_api_key
         # Retries are handled uniformly by `with_retries`, so the SDK's own are disabled.
