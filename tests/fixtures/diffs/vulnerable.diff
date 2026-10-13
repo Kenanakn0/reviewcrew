@@ -1,0 +1,25 @@
+diff --git a/app/settings.py b/app/settings.py
+index 0fd1d21..3fbf217 100644
+--- a/app/settings.py
++++ b/app/settings.py
+@@ -4,3 +4,7 @@ import os
+ 
+ DEBUG = os.environ.get("DEBUG") == "1"
+ DATABASE_PATH = os.environ.get("DATABASE_PATH", "app.db")
++
++# Payment provider
++PAYMENTS_API_KEY = "pk9f3Kq7Zr2LmX8vBn4TdW1yHs6Gc0Ea"
++PAYMENT_TIMEOUT_SECONDS = 30
+diff --git a/app/users.py b/app/users.py
+index 94ff32b..5ace493 100644
+--- a/app/users.py
++++ b/app/users.py
+@@ -5,3 +5,8 @@ import sqlite3
+ 
+ def get_user_by_id(conn: sqlite3.Connection, user_id: int):
+     return conn.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
++
++
++def find_users_by_name(conn: sqlite3.Connection, name: str):
++    query = f"SELECT id, name, email FROM users WHERE name LIKE '%{name}%'"
++    return conn.execute(query).fetchall()
