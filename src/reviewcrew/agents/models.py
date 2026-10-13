@@ -55,6 +55,7 @@ class AgentResult(BaseModel):
     usage: TokenUsage = TokenUsage()
     errors: tuple[str, ...] = ()  # chunks that produced no usable output, with the reason
     duration_seconds: float = 0.0  # wall-clock time of the whole agent, set by the orchestrator
+    skipped_chunks: int = 0  # not reviewed because the PR's token budget ran out
 
     def __add__(self, other: "AgentResult") -> "AgentResult":
         return AgentResult(
@@ -63,4 +64,5 @@ class AgentResult(BaseModel):
             usage=self.usage + other.usage,
             errors=self.errors + other.errors,
             duration_seconds=max(self.duration_seconds, other.duration_seconds),
+            skipped_chunks=self.skipped_chunks + other.skipped_chunks,
         )
