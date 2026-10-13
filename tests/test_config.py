@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
+from pydantic_settings import SettingsError
 
 from reviewcrew.config import Settings, get_settings
 
@@ -141,3 +142,47 @@ def test_api_key_is_masked(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-very-secret")
 
     assert "sk-ant-very-secret" not in repr(Settings(_env_file=None))
+
+
+@pytest.mark.usefixtures("required_env")
+def test_review_defaults_run_all_agents() -> None:
+    settings = Settings(_env_file=None)
+
+    assert settings.review_agents == ["security", "performance", "tests"]
+    options = settings.review_options()
+    assert options.aggregation.min_confidence == 0.5
+    assert options.max_inline_comments == 20
+    assert options.max_concurrent_llm_calls == 4
+
+
+@pytest.mark.usefixtures("required_env")
+def test_review_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REVIEW_AGENTS", '["security", "tests"]')
+    monkeypatch.setenv("REVIEW_MIN_CONFIDENCE", "0.7")
+    monkeypatch.setenv("REVIEW_MAX_INLINE_COMMENTS", "5")
+    monkeypatch.setenv("REVIEW_AGENT_TIMEOUT_SECONDS", "120")
+
+    settings = Settings(_env_file=None)
+    options = settings.review_options()
+
+    assert settings.review_agents == ["security", "tests"]
+    assert options.aggregation.min_confidence == 0.7
+    assert options.max_inline_comments == 5
+    assert options.agent_timeout_seconds == 120
+
+
+@pytest.mark.usefixtures("required_env")
+@pytest.mark.parametrize("value", ['["security", "style"]', "[]"])
+def test_invalid_agent_lists_are_rejected(monkeypatch: pytest.MonkeyPatch, value: str) -> None:
+    monkeypatch.setenv("REVIEW_AGENTS", value)
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+@pytest.mark.usefixtures("required_env")
+def test_agent_list_must_be_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("REVIEW_AGENTS", "security")
+
+    with pytest.raises(SettingsError, match="review_agents"):
+        Settings(_env_file=None)

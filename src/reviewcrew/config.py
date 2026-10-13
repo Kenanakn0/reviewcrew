@@ -6,10 +6,17 @@ from typing import Literal, Self
 from pydantic import Field, FilePath, HttpUrl, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from reviewcrew.agents.models import AgentName
 from reviewcrew.diff.chunker import MIN_CHUNK_TOKENS
 from reviewcrew.diff.filters import FilterConfig
 from reviewcrew.diff.processor import DiffOptions
 from reviewcrew.llm.anthropic_provider import Effort
+from reviewcrew.pipeline.aggregator import AggregationConfig
+from reviewcrew.pipeline.options import ReviewOptions
+
+
+def _all_agents() -> list[AgentName]:
+    return ["security", "performance", "tests"]
 
 
 class Settings(BaseSettings):
@@ -52,8 +59,24 @@ class Settings(BaseSettings):
     openai_compat_base_url: HttpUrl | None = None
     openai_compat_api_key: SecretStr | None = None
 
-    # Review output.
+    llm_max_concurrency: int = Field(default=4, ge=1)  # simultaneous LLM calls per review
+
+    # Review.
+    # JSON list in the environment, e.g. REVIEW_AGENTS='["security", "tests"]'.
+    review_agents: list[AgentName] = Field(default_factory=_all_agents, min_length=1)
     review_language: Literal["en", "tr"] = "en"
+    review_min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    review_max_inline_comments: int = Field(default=20, ge=0)
+    review_agent_timeout_seconds: float = Field(default=600.0, gt=0)
+
+    def review_options(self) -> ReviewOptions:
+        return ReviewOptions(
+            diff=self.diff_options(),
+            aggregation=AggregationConfig(min_confidence=self.review_min_confidence),
+            max_inline_comments=self.review_max_inline_comments,
+            agent_timeout_seconds=self.review_agent_timeout_seconds,
+            max_concurrent_llm_calls=self.llm_max_concurrency,
+        )
 
     @model_validator(mode="after")
     def _check_llm_provider(self) -> Self:

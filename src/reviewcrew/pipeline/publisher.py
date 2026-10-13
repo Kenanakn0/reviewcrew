@@ -1,13 +1,15 @@
-"""Turn agent results into a single GitHub review: inline comments plus a summary."""
+"""Render a finished review run as a single GitHub review: inline comments plus a summary."""
 
 from collections.abc import Iterable, Sequence
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from reviewcrew.agents.models import SEVERITY_ORDER, AgentName, AgentResult, Finding
+from reviewcrew.agents.models import AgentName, AgentResult, Finding
 from reviewcrew.diff.filters import SkipReason
 from reviewcrew.diff.processor import ProcessedDiff
+from reviewcrew.pipeline.aggregator import rank_key
+from reviewcrew.pipeline.verifier import InlineFinding, VerifiedFindings
 from reviewcrew.redaction import redact
 
 AGENT_LABELS: dict[AgentName, str] = {
@@ -26,7 +28,10 @@ SKIP_REASON_LABELS: dict[SkipReason, str] = {
     "generated": "generated",
     "too_large": "too large",
 }
-MAX_SKIPPED_LISTED = 20
+MAX_LISTED = 30  # per summary section
+# GitHub rejects review bodies over 65,536 characters; stay well below.
+MAX_BODY_CHARS = 60_000
+TRUNCATED_NOTICE = "\n\n…(summary truncated)"
 
 
 class ReviewComment(BaseModel):
@@ -57,22 +62,19 @@ class ReviewPayload(BaseModel):
         return self.model_dump(mode="json", exclude_none=True)
 
 
-def sort_findings(findings: Iterable[Finding]) -> list[Finding]:
-    return sorted(
-        findings, key=lambda f: (SEVERITY_ORDER[f.severity], -f.confidence, f.path, f.line)
-    )
+class ReviewReport(BaseModel):
+    """Everything the review run produced, ready to be rendered."""
 
+    model_config = ConfigDict(frozen=True)
 
-def _anchor(finding: Finding, diff: ProcessedDiff) -> tuple[int, int | None] | None:
-    """(line, start_line) for an inline comment, or None if GitHub would reject the line."""
-    if not diff.is_commentable(finding.path, finding.line):
-        return None
-    end = finding.end_line
-    if end is not None and diff.is_commentable(finding.path, end):
-        file = diff.files[finding.path]
-        if file.hunk_for_line(finding.line) is file.hunk_for_line(end):
-            return end, finding.line  # multi-line comments must stay within one hunk
-    return finding.line, None
+    results: tuple[AgentResult, ...]
+    diff: ProcessedDiff
+    verified: VerifiedFindings
+    below_confidence: int = 0
+    duplicates_merged: int = 0
+    max_inline_comments: int = 20
+    head_sha: str
+    duration_seconds: float
 
 
 def format_comment(finding: Finding) -> str:
@@ -94,111 +96,134 @@ def _location(finding: Finding) -> str:
     return f"`{finding.path.replace('`', "'")}:{span}`"
 
 
-def _highest(findings: Sequence[Finding]) -> str:
-    return sort_findings(findings)[0].severity if findings else "—"
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _finding_list(title: str, findings: Sequence[Finding], *, details: bool) -> list[str]:
+    if not findings:
+        return []
+    lines = ["", f"### {title}", ""]
+    for finding in sorted(findings, key=rank_key)[:MAX_LISTED]:
+        lines.append(
+            f"- **{finding.severity.capitalize()}** {_location(finding)} "
+            f"({AGENT_LABELS[finding.agent]}): {finding.title}"
+        )
+        if details:
+            lines.append(f"  {finding.explanation}")
+    if len(findings) > MAX_LISTED:
+        lines.append(f"- …and {len(findings) - MAX_LISTED} more")
+    return lines
+
+
+def _agent_table(report: ReviewReport, shown: Sequence[Finding]) -> list[str]:
+    lines = [
+        "| Agent | Findings | Highest severity | Tokens | Time | Status |",
+        "|---|---:|---|---:|---:|---|",
+    ]
+    for result in report.results:
+        mine = sorted((f for f in shown if f.agent == result.agent), key=rank_key)
+        highest = mine[0].severity if mine else "—"
+        status = "✅" if not result.errors else f"⚠️ {_plural(len(result.errors), 'error')}"
+        lines.append(
+            f"| {AGENT_LABELS[result.agent]} | {len(mine)} | {highest} | "
+            f"{result.usage.total_tokens:,} | {result.duration_seconds:.1f}s | {status} |"
+        )
+    return lines
 
 
 def build_summary(
-    results: Sequence[AgentResult],
-    diff: ProcessedDiff,
+    report: ReviewReport,
     *,
-    inline_count: int,
-    outside: Sequence[Finding],
-    head_sha: str,
-    duration_seconds: float,
+    inline: Sequence[InlineFinding],
+    overflow: Sequence[Finding],
+    inline_disabled: bool = False,
 ) -> str:
-    total = sum(len(r.findings) for r in results)
-    tokens = sum(r.usage.total_tokens for r in results)
+    outside = report.verified.outside
+    shown = [item.finding for item in inline] + list(overflow) + list(outside)
+    diff = report.diff
     lines = ["## 🛡️ ReviewCrew review", ""]
 
     if not diff.chunks:
         lines.append("No reviewable changes in this pull request.")
     else:
-        lines += [
-            "| Agent | Findings | Highest severity |",
-            "|---|---:|---|",
-            *(
-                f"| {AGENT_LABELS[r.agent]} | {len(r.findings)} | {_highest(r.findings)} |"
-                for r in results
-            ),
-            "",
-            f"**{total} finding{'s' if total != 1 else ''}**: {inline_count} inline"
-            + (f", {len(outside)} below (not on a changed line)" if outside else "")
-            + ".",
-        ]
-
-    if outside:
-        lines += ["", "### Findings outside the diff", ""]
-        for finding in sort_findings(outside):
-            lines.append(
-                f"- **{finding.severity.capitalize()}** {_location(finding)} "
-                f"({AGENT_LABELS[finding.agent]}): {finding.title}"
+        lines += _agent_table(report, shown)
+        placement = [f"{len(inline)} inline"]
+        if overflow or outside:
+            placement.append(f"{len(overflow) + len(outside)} listed below")
+        lines += ["", f"**{_plural(len(shown), 'finding')}**: {', '.join(placement)}."]
+        hidden = []
+        if report.below_confidence:
+            hidden.append(_plural(report.below_confidence, "low-confidence finding") + " hidden")
+        if report.duplicates_merged:
+            hidden.append(_plural(report.duplicates_merged, "duplicate") + " merged")
+        if report.verified.unknown_file:
+            hidden.append(
+                _plural(report.verified.unknown_file, "finding") + " on unknown files dropped"
             )
-            lines.append(f"  {finding.explanation}")
+        if hidden:
+            lines.append(f"<sub>{' · '.join(hidden)}</sub>")
 
-    errors = [error for r in results for error in r.errors]
+    overflow_title = (
+        "Findings"
+        if inline_disabled
+        else f"More findings (inline limit of {report.max_inline_comments} reached)"
+    )
+    lines += _finding_list(overflow_title, overflow, details=True)
+    lines += _finding_list("Findings outside the changed lines", outside, details=True)
+
+    errors = [f"{result.agent}: {error}" for result in report.results for error in result.errors]
     if errors:
         lines += ["", "⚠️ Some parts could not be reviewed:", ""]
-        lines += [f"- {error}" for error in errors]
+        lines += [f"- {error}" for error in errors[:MAX_LISTED]]
 
     if diff.skipped:
         lines += ["", f"<details><summary>Skipped files ({len(diff.skipped)})</summary>", ""]
-        for skipped in diff.skipped[:MAX_SKIPPED_LISTED]:
+        for skipped in diff.skipped[:MAX_LISTED]:
             path = skipped.path.replace("`", "'")
             lines.append(f"- `{path}` ({SKIP_REASON_LABELS[skipped.reason]})")
-        if len(diff.skipped) > MAX_SKIPPED_LISTED:
-            lines.append(f"- …and {len(diff.skipped) - MAX_SKIPPED_LISTED} more")
+        if len(diff.skipped) > MAX_LISTED:
+            lines.append(f"- …and {len(diff.skipped) - MAX_LISTED} more")
         lines += ["", "</details>"]
 
+    tokens = sum(result.usage.total_tokens for result in report.results)
     lines += [
         "",
         f"<sub>Reviewed {len(diff.files)} of {diff.total_files} files in "
-        f"{len(diff.chunks)} chunk{'s' if len(diff.chunks) != 1 else ''} · "
-        f"{tokens:,} tokens · {duration_seconds:.1f}s · commit {head_sha[:7]} · "
+        f"{_plural(len(diff.chunks), 'chunk')} · {tokens:,} tokens · "
+        f"{report.duration_seconds:.1f}s total · commit {report.head_sha[:7]} · "
         "automated suggestions, please verify.</sub>",
     ]
-    return "\n".join(lines)
+    body = "\n".join(lines)
+    if len(body) > MAX_BODY_CHARS:
+        body = body[: MAX_BODY_CHARS - len(TRUNCATED_NOTICE)] + TRUNCATED_NOTICE
+    return body
 
 
 def build_review(
-    results: Sequence[AgentResult],
-    diff: ProcessedDiff,
-    *,
-    head_sha: str,
-    secrets: Iterable[str],
-    duration_seconds: float,
-    allow_inline: bool = True,
+    report: ReviewReport, *, secrets: Iterable[str], allow_inline: bool = True
 ) -> ReviewPayload:
-    """Inline comments for findings on commentable lines; everything else in the summary.
+    """Inline comments up to the limit; everything else goes to the summary.
 
-    All text is passed through secret redaction before it leaves the process.
+    All text passes through secret redaction before it leaves the process.
     """
     secrets = set(secrets)
-    comments: list[ReviewComment] = []
-    outside: list[Finding] = []
-    for finding in sort_findings(f for r in results for f in r.findings):
-        anchor = _anchor(finding, diff) if allow_inline else None
-        if anchor is None:
-            outside.append(finding)
-            continue
-        line, start_line = anchor
-        comments.append(
-            ReviewComment(
-                path=finding.path,
-                line=line,
-                start_line=start_line,
-                start_side="RIGHT" if start_line is not None else None,
-                body=redact(format_comment(finding), secrets),
-            )
+    candidates = list(report.verified.inline)
+    limit = report.max_inline_comments if allow_inline else 0
+    inline, overflow = candidates[:limit], [item.finding for item in candidates[limit:]]
+    comments = tuple(
+        ReviewComment(
+            path=item.finding.path,
+            line=item.line,
+            start_line=item.start_line,
+            start_side="RIGHT" if item.start_line is not None else None,
+            body=redact(format_comment(item.finding), secrets),
         )
+        for item in inline
+    )
     summary = build_summary(
-        results,
-        diff,
-        inline_count=len(comments),
-        outside=outside,
-        head_sha=head_sha,
-        duration_seconds=duration_seconds,
+        report, inline=inline, overflow=overflow, inline_disabled=not allow_inline
     )
     return ReviewPayload(
-        commit_id=head_sha, body=redact(summary, secrets), comments=tuple(comments)
+        commit_id=report.head_sha, body=redact(summary, secrets), comments=comments
     )

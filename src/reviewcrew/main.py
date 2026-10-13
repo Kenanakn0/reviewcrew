@@ -12,7 +12,7 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from reviewcrew import __version__
-from reviewcrew.agents.security import SecurityAgent
+from reviewcrew.agents.registry import AGENT_CLASSES
 from reviewcrew.config import Settings, get_settings
 from reviewcrew.github.auth import InstallationTokenProvider
 from reviewcrew.github.client import GitHubClient
@@ -52,8 +52,11 @@ async def _github_lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.pr_handler = partial(
             review_pull_request,
             github=GitHubClient(http, tokens),
-            agents=[SecurityAgent(llm, language=settings.review_language)],
-            options=settings.diff_options(),
+            agents=[
+                AGENT_CLASSES[name](llm, language=settings.review_language)
+                for name in dict.fromkeys(settings.review_agents)
+            ],
+            options=settings.review_options(),
         )
         yield
 

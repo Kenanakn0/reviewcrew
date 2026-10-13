@@ -6,7 +6,13 @@ import pytest
 from reviewcrew.agents.models import AgentResult, Finding
 from reviewcrew.diff.processor import ProcessedDiff, process_diff
 from reviewcrew.llm.base import TokenUsage
-from reviewcrew.pipeline.publisher import build_review, format_comment, sort_findings
+from reviewcrew.pipeline.publisher import (
+    MAX_BODY_CHARS,
+    ReviewReport,
+    build_review,
+    format_comment,
+)
+from reviewcrew.pipeline.verifier import verify
 from tests.helpers import load_diff
 
 KEY = "pk9f3Kq7Zr2LmX8vBn4TdW1yHs6Gc0Ea"
@@ -18,7 +24,7 @@ def diff() -> ProcessedDiff:
     return process_diff(load_diff("vulnerable.diff"))
 
 
-def _finding(path: str = "app/users.py", line: int = 11, **overrides: object) -> Finding:
+def finding(path: str = "app/users.py", line: int = 11, **overrides: object) -> Finding:
     fields: dict[str, object] = {
         "agent": "security",
         "path": path,
@@ -33,130 +39,137 @@ def _finding(path: str = "app/users.py", line: int = 11, **overrides: object) ->
     return Finding.model_validate(fields)
 
 
-def _review(
-    diff: ProcessedDiff, *findings: Finding, errors: tuple[str, ...] = ()
-) -> dict[str, Any]:
-    result = AgentResult(
-        agent="security",
-        findings=findings,
-        usage=TokenUsage(input_tokens=1000, output_tokens=200),
-        errors=errors,
+def report(
+    diff: ProcessedDiff, *findings: Finding, max_inline: int = 20, **extra: Any
+) -> ReviewReport:
+    results = tuple(
+        AgentResult(
+            agent=agent,
+            findings=tuple(f for f in findings if f.agent == agent),
+            usage=TokenUsage(input_tokens=1000, output_tokens=200),
+            duration_seconds=2.5,
+            errors=extra.pop(f"{agent}_errors", ()),
+        )
+        for agent in ("security", "performance", "tests")
     )
-    return build_review([result], diff, head_sha=SHA, secrets={KEY}, duration_seconds=3.2).to_api()
+    return ReviewReport(
+        results=results,
+        diff=diff,
+        verified=verify(findings, diff),
+        max_inline_comments=max_inline,
+        head_sha=SHA,
+        duration_seconds=7.25,
+        **extra,
+    )
+
+
+def review(diff: ProcessedDiff, *findings: Finding, **kwargs: Any) -> dict[str, Any]:
+    return build_review(report(diff, *findings, **kwargs), secrets={KEY}).to_api()
 
 
 def test_review_is_always_a_comment_on_the_head_commit(diff: ProcessedDiff) -> None:
-    review = _review(diff, _finding())
+    payload = review(diff, finding())
 
-    assert review["event"] == "COMMENT"
-    assert review["commit_id"] == SHA
-
-
-def test_findings_on_diff_lines_become_inline_comments(diff: ProcessedDiff) -> None:
-    review = _review(diff, _finding("app/users.py", 11), _finding("app/settings.py", 9))
-
-    anchors = {(c["path"], c["line"], c["side"]) for c in review["comments"]}
-    assert anchors == {("app/users.py", 11, "RIGHT"), ("app/settings.py", 9, "RIGHT")}
-    assert all("start_line" not in c for c in review["comments"])  # None fields are dropped
+    assert payload["event"] == "COMMENT"
+    assert payload["commit_id"] == SHA
 
 
-def test_multi_line_finding_within_a_hunk(diff: ProcessedDiff) -> None:
-    review = _review(diff, _finding(line=11, end_line=12))
+def test_verified_findings_become_inline_comments(diff: ProcessedDiff) -> None:
+    payload = review(diff, finding(line=11, end_line=12), finding("app/settings.py", 9))
 
-    (comment,) = review["comments"]
-    assert (comment["start_line"], comment["line"], comment["start_side"]) == (11, 12, "RIGHT")
+    comments = {(c["path"], c.get("start_line"), c["line"]) for c in payload["comments"]}
+    assert comments == {("app/users.py", 11, 12), ("app/settings.py", None, 9)}
+    assert all(c["side"] == "RIGHT" for c in payload["comments"])
 
 
-def test_end_line_outside_the_diff_falls_back_to_a_single_line(diff: ProcessedDiff) -> None:
-    review = _review(diff, _finding(line=12, end_line=40))
+def test_agent_table_tokens_time_and_status(diff: ProcessedDiff) -> None:
+    payload = review(
+        diff,
+        finding(),
+        finding("app/settings.py", 9, severity="critical"),
+        finding(agent="performance", line=12, severity="medium", title="fetchall"),
+        tests_errors=("chunk 0: crashed (RuntimeError)",),
+    )
 
-    (comment,) = review["comments"]
-    assert comment["line"] == 12
-    assert "start_line" not in comment
+    body = payload["body"]
+    assert "| 🔒 Security | 2 | critical | 1,200 | 2.5s | ✅ |" in body
+    assert "| ⚡ Performance | 1 | medium | 1,200 | 2.5s | ✅ |" in body
+    assert "| 🧪 Tests | 0 | — | 1,200 | 2.5s | ⚠️ 1 error |" in body
+    assert "**3 findings**: 3 inline." in body
+    assert "tests: chunk 0: crashed (RuntimeError)" in body
+    assert "3,600 tokens · 7.2s total" in body
+
+
+def test_hidden_counts_are_reported(diff: ProcessedDiff) -> None:
+    payload = review(diff, finding(), below_confidence=4, duplicates_merged=2)
+
+    assert "4 low-confidence findings hidden · 2 duplicates merged" in payload["body"]
+
+
+def test_inline_limit_moves_the_rest_to_the_summary(diff: ProcessedDiff) -> None:
+    findings = [
+        finding(line=line, severity=sev, title=f"Issue {line}")
+        for line, sev in [(11, "critical"), (12, "medium"), (10, "low")]
+    ]
+
+    payload = review(diff, *findings, max_inline=2)
+
+    assert [c["line"] for c in payload["comments"]] == [11, 12]
+    assert "More findings (inline limit of 2 reached)" in payload["body"]
+    assert "`app/users.py:10`" in payload["body"]
+    assert "User input reaches the query." in payload["body"]  # explanation not lost
 
 
 def test_findings_outside_the_diff_go_to_the_summary(diff: ProcessedDiff) -> None:
-    review = _review(diff, _finding(line=2, title="Pre-existing issue"))
+    payload = review(diff, finding(line=2, title="Pre-existing issue"))
 
-    assert review["comments"] == []
-    assert "### Findings outside the diff" in review["body"]
-    assert "`app/users.py:2`" in review["body"]
-    assert "Pre-existing issue" in review["body"]
-
-
-def test_summary_table_and_footer(diff: ProcessedDiff) -> None:
-    review = _review(diff, _finding(), _finding("app/settings.py", 9, severity="critical"))
-
-    body = review["body"]
-    assert "| 🔒 Security | 2 | critical |" in body
-    assert "**2 findings**: 2 inline." in body
-    assert "1,200 tokens" in body
-    assert "commit 0123456" in body
+    assert payload["comments"] == []
+    assert "### Findings outside the changed lines" in payload["body"]
+    assert "`app/users.py:2`" in payload["body"]
 
 
-def test_summary_reports_agent_errors(diff: ProcessedDiff) -> None:
-    review = _review(diff, errors=("chunk 0: HTTP 529",))
+def test_summary_only_mode_for_the_422_fallback(diff: ProcessedDiff) -> None:
+    payload = build_review(report(diff, finding()), secrets=set(), allow_inline=False).to_api()
 
-    assert "Some parts could not be reviewed" in review["body"]
-    assert "chunk 0: HTTP 529" in review["body"]
+    assert payload["comments"] == []
+    assert "### Findings\n" in payload["body"]
+    assert "inline limit" not in payload["body"]
 
 
 def test_secrets_never_appear_in_the_review(diff: ProcessedDiff) -> None:
-    leaky = _finding(
+    leaky = finding(
         "app/settings.py",
         9,
         title=f"Hardcoded key {KEY}",
         explanation=f"The value {KEY} is committed.",
         suggestion=f'Replace "{KEY}" with os.environ["PAYMENTS_API_KEY"].',
     )
-    outside = _finding("app/settings.py", 1, explanation=f"Also seen: {KEY}")
 
-    review = _review(diff, leaky, outside)
+    payload = review(diff, leaky, finding("app/settings.py", 1, explanation=f"Also {KEY}"))
 
-    assert KEY not in json.dumps(review)
-    assert "pk9f…[REDACTED]" in review["comments"][0]["body"]
-
-
-def test_inline_can_be_disabled(diff: ProcessedDiff) -> None:
-    result = AgentResult(agent="security", findings=(_finding(),))
-
-    review = build_review(
-        [result], diff, head_sha=SHA, secrets=set(), duration_seconds=1, allow_inline=False
-    ).to_api()
-
-    assert review["comments"] == []
-    assert "`app/users.py:11`" in review["body"]
+    assert KEY not in json.dumps(payload)
+    assert "pk9f…[REDACTED]" in payload["comments"][0]["body"]
 
 
 def test_no_reviewable_files() -> None:
-    empty = process_diff("")
+    payload = build_review(report(process_diff("")), secrets=set()).to_api()
 
-    review = build_review(
-        [AgentResult(agent="security")], empty, head_sha=SHA, secrets=set(), duration_seconds=0
-    ).to_api()
-
-    assert "No reviewable changes" in review["body"]
+    assert "No reviewable changes" in payload["body"]
 
 
-def test_sorting_by_severity_then_confidence() -> None:
-    findings = [
-        _finding(severity="low", confidence=0.99),
-        _finding(severity="critical", confidence=0.5),
-        _finding(severity="critical", confidence=0.9),
-    ]
+def test_body_is_capped_below_githubs_limit(diff: ProcessedDiff) -> None:
+    long = "x" * 5000
+    findings = [finding(line=2, title=f"Old issue {i}", explanation=long) for i in range(30)]
 
-    ordered = sort_findings(findings)
+    payload = review(diff, *findings)
 
-    assert [(f.severity, f.confidence) for f in ordered] == [
-        ("critical", 0.9),
-        ("critical", 0.5),
-        ("low", 0.99),
-    ]
+    assert len(payload["body"]) <= MAX_BODY_CHARS
+    assert payload["body"].endswith("(summary truncated)")
 
 
 def test_comment_format() -> None:
-    body = format_comment(_finding(confidence=0.875))
+    body = format_comment(finding(agent="tests", severity="medium", confidence=0.875))
 
-    assert body.startswith("**🔒 Security · High** · confidence 0.88")
+    assert body.startswith("**🧪 Tests · Medium** · confidence 0.88")
     assert "**SQL injection**" in body
     assert "**Suggested fix**" in body

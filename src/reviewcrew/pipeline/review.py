@@ -1,4 +1,5 @@
-"""End-to-end handling of one pull request: diff -> agents -> review."""
+"""End-to-end handling of one pull request:
+diff -> agents (parallel) -> aggregate -> verify -> one GitHub review."""
 
 import asyncio
 import logging
@@ -8,11 +9,14 @@ from collections.abc import Sequence
 import httpx
 
 from reviewcrew.agents.base import BaseAgent
-from reviewcrew.agents.models import AgentResult
 from reviewcrew.diff.models import FileDiff
-from reviewcrew.diff.processor import DiffOptions, process_diff
+from reviewcrew.diff.processor import process_diff
 from reviewcrew.github.client import GitHubClient
-from reviewcrew.pipeline.publisher import build_review
+from reviewcrew.pipeline.aggregator import aggregate
+from reviewcrew.pipeline.options import ReviewOptions
+from reviewcrew.pipeline.orchestrator import run_agents
+from reviewcrew.pipeline.publisher import ReviewReport, build_review
+from reviewcrew.pipeline.verifier import verify
 from reviewcrew.redaction import secrets_in_diff
 from reviewcrew.webhook.events import PullRequestEvent
 
@@ -52,7 +56,7 @@ async def review_pull_request(
     *,
     github: GitHubClient,
     agents: Sequence[BaseAgent],
-    options: DiffOptions,
+    options: ReviewOptions,
 ) -> None:
     started = time.monotonic()
     installation_id = event.installation.id
@@ -61,25 +65,32 @@ async def review_pull_request(
     head_sha = event.pull_request.head.sha
 
     diff_text = await github.get_pull_request_diff(installation_id, repo, number)
-    diff = process_diff(diff_text, options)
-    if options.context_lines > 0 and diff.files:
+    diff = process_diff(diff_text, options.diff)
+    if options.diff.context_lines > 0 and diff.files:
         contents = await _fetch_head_contents(github, event, list(diff.files.values()))
-        diff = process_diff(diff_text, options, new_contents=contents)
+        diff = process_diff(diff_text, options.diff, new_contents=contents)
 
-    results: list[AgentResult] = []
-    for agent in agents:
-        result = AgentResult(agent=agent.name)
-        for chunk in diff.chunks:
-            result += await agent.review_chunk(
-                chunk, pr_title=event.pull_request.title, chunk_count=len(diff.chunks)
-            )
-        results.append(result)
+    results = await run_agents(
+        agents,
+        diff.chunks,
+        pr_title=event.pull_request.title,
+        agent_timeout_seconds=options.agent_timeout_seconds,
+        max_concurrent_calls=options.max_concurrent_llm_calls,
+    )
+    aggregation = aggregate((f for r in results for f in r.findings), options.aggregation)
+    report = ReviewReport(
+        results=tuple(results),
+        diff=diff,
+        verified=verify(aggregation.findings, diff),
+        below_confidence=aggregation.below_confidence,
+        duplicates_merged=aggregation.duplicates_merged,
+        max_inline_comments=options.max_inline_comments,
+        head_sha=head_sha,
+        duration_seconds=time.monotonic() - started,
+    )
 
     secrets = secrets_in_diff(diff.files.values())
-    duration = time.monotonic() - started
-    payload = build_review(
-        results, diff, head_sha=head_sha, secrets=secrets, duration_seconds=duration
-    )
+    payload = build_review(report, secrets=secrets)
     try:
         await github.create_review(installation_id, repo, number, payload.to_api())
     except httpx.HTTPStatusError as exc:
@@ -89,22 +100,17 @@ async def review_pull_request(
         logger.warning(
             "Inline review rejected for %s#%s (422); retrying summary-only", repo, number
         )
-        payload = build_review(
-            results,
-            diff,
-            head_sha=head_sha,
-            secrets=secrets,
-            duration_seconds=duration,
-            allow_inline=False,
-        )
+        payload = build_review(report, secrets=secrets, allow_inline=False)
         await github.create_review(installation_id, repo, number, payload.to_api())
 
     logger.info(
-        "Reviewed %s#%s: %d findings (%d inline), %d tokens, %.1fs",
+        "Reviewed %s#%s: %d findings (%d inline, %d below confidence, %d merged), %d tokens, %.1fs",
         repo,
         number,
-        sum(len(r.findings) for r in results),
+        len(aggregation.findings),
         len(payload.comments),
+        aggregation.below_confidence,
+        aggregation.duplicates_merged,
         sum(r.usage.total_tokens for r in results),
         time.monotonic() - started,
     )

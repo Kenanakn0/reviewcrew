@@ -12,11 +12,14 @@ import pytest
 import respx
 
 from reviewcrew.agents.models import AgentReport, FindingDraft
+from reviewcrew.agents.performance import PerformanceAgent
 from reviewcrew.agents.security import SecurityAgent
+from reviewcrew.agents.tests import TestAgent
 from reviewcrew.diff.processor import DiffOptions
 from reviewcrew.github.auth import InstallationTokenProvider
 from reviewcrew.github.client import GitHubClient
 from reviewcrew.llm.base import LLMRequestError
+from reviewcrew.pipeline.options import ReviewOptions
 from reviewcrew.pipeline.review import review_pull_request
 from reviewcrew.webhook.events import PullRequestEvent
 from tests.fakes import FakeLLM
@@ -127,7 +130,7 @@ async def test_sql_injection_and_hardcoded_key_are_reported_on_the_right_lines(
     llm = FakeLLM([security_model])
 
     await review_pull_request(
-        event, github=github, agents=[SecurityAgent(llm)], options=DiffOptions()
+        event, github=github, agents=[SecurityAgent(llm)], options=ReviewOptions()
     )
 
     review = _payload(reviews)
@@ -147,7 +150,10 @@ async def test_head_contents_give_the_agent_extra_context(
     llm = FakeLLM([AgentReport(findings=[])])
 
     await review_pull_request(
-        event, github=github, agents=[SecurityAgent(llm)], options=DiffOptions(context_lines=5)
+        event,
+        github=github,
+        agents=[SecurityAgent(llm)],
+        options=ReviewOptions(diff=DiffOptions(context_lines=5)),
     )
 
     (_, user_prompt), *_ = llm.calls
@@ -164,7 +170,7 @@ async def test_rejected_inline_comments_fall_back_to_a_summary_only_review(
         event,
         github=github,
         agents=[SecurityAgent(FakeLLM([security_model]))],
-        options=DiffOptions(),
+        options=ReviewOptions(),
     )
 
     assert reviews.call_count == 2
@@ -184,9 +190,83 @@ async def test_review_is_still_posted_when_the_llm_fails(
         event,
         github=github,
         agents=[SecurityAgent(FakeLLM([LLMRequestError("HTTP 401: invalid x-api-key")]))],
-        options=DiffOptions(),
+        options=ReviewOptions(),
     )
 
     review = _payload(reviews)
     assert review["comments"] == []
-    assert "HTTP 401" in review["body"]
+    assert "the LLM provider rejected the request" in review["body"]
+    assert "invalid x-api-key" not in review["body"]  # provider details stay in the logs
+
+
+def performance_model(system: str, user: str) -> AgentReport:
+    return AgentReport(
+        findings=[
+            FindingDraft(
+                path="app/users.py",
+                line=12,
+                end_line=None,
+                severity="medium",
+                confidence=0.8,
+                title="Unbounded fetchall loads every matching row",
+                explanation="A broad LIKE pattern can return the whole table.",
+                suggestion="Paginate with LIMIT/OFFSET.",
+            ),
+            FindingDraft(  # same issue as the security agent's: must be merged
+                path="app/users.py",
+                line=11,
+                end_line=None,
+                severity="medium",
+                confidence=0.6,
+                title="SQL injection in find_users_by_name",
+                explanation="Also a correctness problem.",
+                suggestion=None,
+            ),
+            FindingDraft(  # below the default confidence threshold: must be hidden
+                path="app/settings.py",
+                line=10,
+                end_line=None,
+                severity="low",
+                confidence=0.2,
+                title="Timeout might be too long",
+                explanation="Maybe.",
+                suggestion=None,
+            ),
+        ]
+    )
+
+
+@respx.mock
+async def test_three_agents_review_even_when_one_crashes(
+    github: GitHubClient, event: PullRequestEvent
+) -> None:
+    """Stage 4 acceptance: agents run together, a crashed agent does not stop the review,
+    duplicates are merged and low-confidence findings hidden."""
+    reviews = _mock_github()
+
+    await review_pull_request(
+        event,
+        github=github,
+        agents=[
+            SecurityAgent(FakeLLM([security_model])),
+            PerformanceAgent(FakeLLM([performance_model])),
+            TestAgent(FakeLLM([RuntimeError("simulated crash")])),
+        ],
+        options=ReviewOptions(),
+    )
+
+    review = _payload(reviews)
+    anchors = {(c["path"], c.get("start_line"), c["line"]) for c in review["comments"]}
+    assert anchors == {
+        ("app/settings.py", None, 9),
+        ("app/users.py", None, 12),
+        ("app/users.py", 11, 12),
+    }
+    body = review["body"]
+    assert "| 🔒 Security | 2 | critical |" in body
+    assert "| ⚡ Performance | 1 | medium |" in body
+    assert "| 🧪 Tests | 0 | — |" in body
+    assert "⚠️ 1 error" in body
+    assert "tests: chunk 0: crashed (RuntimeError)" in body
+    assert "1 low-confidence finding hidden · 1 duplicate merged" in body
+    assert KEY not in json.dumps(review)
