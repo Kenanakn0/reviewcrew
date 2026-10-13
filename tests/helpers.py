@@ -1,5 +1,6 @@
 """Shared test constants and builders for GitHub webhook payloads."""
 
+from pathlib import Path
 from typing import Any
 
 WEBHOOK_SECRET = "test-webhook-secret"  # noqa: S105 - test fixture, not a real secret
@@ -28,3 +29,11 @@ def pull_request_payload(
         "installation": {"id": installation_id},
         "sender": {"login": "someone"},
     }
+
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def load_diff(name: str) -> str:
+    """Read a diff fixture byte-for-byte (no newline translation)."""
+    return (FIXTURES / "diffs" / name).read_bytes().decode("utf-8")

@@ -1,0 +1,106 @@
+diff --git a/dist/bundle.js b/dist/bundle.js
+index 458954d..da5f870 100644
+--- a/dist/bundle.js
++++ b/dist/bundle.js
+@@ -1 +1 @@
+-console.log(1);
++console.log(2);
+diff --git "a/docs/\303\274n\303\257code name.md" "b/docs/\303\274n\303\257code name.md"
+index ef0493b..23eb407 100644
+--- "a/docs/\303\274n\303\257code name.md"	
++++ "b/docs/\303\274n\303\257code name.md"	
+@@ -1 +1,2 @@
+ hello
++world
+diff --git a/logo.png b/logo.png
+index c866266..5663091 100644
+Binary files a/logo.png and b/logo.png differ
+diff --git a/package-lock.json b/package-lock.json
+index 17ce43f..e67c2b5 100644
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,3 +1,4 @@
+ {
+-  "lockfileVersion": 3
++  "lockfileVersion": 3,
++  "name": "x"
+ }
+diff --git a/src/app.py b/src/app.py
+index 2f77a44..3de007b 100644
+--- a/src/app.py
++++ b/src/app.py
+@@ -1,8 +1,9 @@
+ line 1
+-line 2
++line 2 changed
+ line 3
+ line 4
+ line 5
++inserted after 5
+ line 6
+ line 7
+ line 8
+@@ -17,7 +18,6 @@ line 16
+ line 17
+ line 18
+ line 19
+-line 20
+ line 21
+ line 22
+ line 23
+@@ -33,7 +33,7 @@ line 32
+ line 33
+ line 34
+ line 35
+-line 36
++line near end changed
+ line 37
+ line 38
+ line 39
+diff --git a/src/new_file.py b/src/new_file.py
+new file mode 100644
+index 0000000..f91dfb5
+--- /dev/null
++++ b/src/new_file.py
+@@ -0,0 +1,3 @@
++import os
++
++API_KEY = os.environ['KEY']
+diff --git a/src/old_name.py b/src/new_name.py
+similarity index 100%
+rename from src/old_name.py
+rename to src/new_name.py
+diff --git a/src/no_newline.txt b/src/no_newline.txt
+index 659e218..597e1f2 100644
+--- a/src/no_newline.txt
++++ b/src/no_newline.txt
+@@ -1,2 +1,3 @@
+ alpha
+-beta
+\ No newline at end of file
++beta
++gamma
+\ No newline at end of file
+diff --git a/src/removed.py b/src/removed.py
+deleted file mode 100644
+index 8d73ae8..0000000
+--- a/src/removed.py
++++ /dev/null
+@@ -1,2 +0,0 @@
+-x = 1
+-y = 2
+diff --git a/static.min.js b/static.min.js
+index 7ba63dd..57f15d5 100644
+--- a/static.min.js
++++ b/static.min.js
+@@ -1 +1 @@
+-var a=1;
++var a=2;
+diff --git a/vendor/lib/thing.go b/vendor/lib/thing.go
+index 0566244..99c7f68 100644
+--- a/vendor/lib/thing.go
++++ b/vendor/lib/thing.go
+@@ -1 +1,3 @@
+ package lib
++
++func X() {}
