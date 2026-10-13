@@ -23,7 +23,7 @@ class FindingDraft(BaseModel):
     severity: Severity
     confidence: float = Field(description="0.0-1.0: how sure you are this is a real problem.")
     title: str = Field(description="One-line summary.")
-    explanation: str = Field(description="Why this is a problem and how it could be exploited.")
+    explanation: str = Field(description="Why this is a problem and its concrete impact.")
     suggestion: str | None = Field(description="How to fix it, ideally with code; or null.")
 
 
@@ -54,6 +54,7 @@ class AgentResult(BaseModel):
     findings: tuple[Finding, ...] = ()
     usage: TokenUsage = TokenUsage()
     errors: tuple[str, ...] = ()  # chunks that produced no usable output, with the reason
+    duration_seconds: float = 0.0  # wall-clock time of the whole agent, set by the orchestrator
 
     def __add__(self, other: "AgentResult") -> "AgentResult":
         return AgentResult(
@@ -61,4 +62,5 @@ class AgentResult(BaseModel):
             findings=self.findings + other.findings,
             usage=self.usage + other.usage,
             errors=self.errors + other.errors,
+            duration_seconds=max(self.duration_seconds, other.duration_seconds),
         )
