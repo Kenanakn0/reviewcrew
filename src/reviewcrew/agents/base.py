@@ -8,7 +8,14 @@ from typing import ClassVar
 
 from reviewcrew.agents.models import AgentName, AgentReport, AgentResult, Finding, FindingDraft
 from reviewcrew.diff.chunker import DiffChunk
-from reviewcrew.llm.base import LLMError, LLMOutputError, LLMProvider, TokenUsage
+from reviewcrew.llm.base import (
+    LLMError,
+    LLMOutputError,
+    LLMProvider,
+    LLMRequestError,
+    LLMTransientError,
+    TokenUsage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +34,18 @@ def _fill(template: str, **values: str) -> str:
     for key, value in values.items():
         template = template.replace("{" + key + "}", value)
     return template
+
+
+def public_reason(exc: LLMError) -> str:
+    """Short, fixed wording for the PR summary. Details (provider messages, raw model
+    output) can reveal infrastructure or echo PR content, so they only go to the logs."""
+    if isinstance(exc, LLMOutputError):
+        return "the model returned unusable output"
+    if isinstance(exc, LLMTransientError):
+        return "the LLM provider was unavailable (retries exhausted)"
+    if isinstance(exc, LLMRequestError):
+        return "the LLM provider rejected the request (check configuration)"
+    return "LLM error"
 
 
 class BaseAgent:
@@ -81,12 +100,14 @@ class BaseAgent:
                     MAX_OUTPUT_ATTEMPTS,
                     exc,
                 )
-                last_error = f"chunk {chunk.index}: invalid output ({exc})"
+                last_error = f"chunk {chunk.index}: {public_reason(exc)}"
                 continue
             except LLMError as exc:
                 logger.error("%s agent: LLM failed for chunk %d: %s", self.name, chunk.index, exc)
                 return AgentResult(
-                    agent=self.name, usage=usage, errors=(f"chunk {chunk.index}: {exc}",)
+                    agent=self.name,
+                    usage=usage,
+                    errors=(f"chunk {chunk.index}: {public_reason(exc)}",),
                 )
             usage += response.usage
             findings = tuple(

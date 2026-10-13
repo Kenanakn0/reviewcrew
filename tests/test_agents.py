@@ -115,7 +115,7 @@ async def test_two_invalid_outputs_give_an_empty_result_not_a_crash(chunk: DiffC
     assert len(llm.calls) == MAX_OUTPUT_ATTEMPTS
     assert result.findings == ()
     assert len(result.errors) == 1
-    assert "invalid output" in result.errors[0]
+    assert result.errors == ("chunk 0: the model returned unusable output",)
 
 
 async def test_request_errors_are_not_retried(chunk: DiffChunk) -> None:
@@ -125,7 +125,9 @@ async def test_request_errors_are_not_retried(chunk: DiffChunk) -> None:
 
     assert len(llm.calls) == 1
     assert result.findings == ()
-    assert result.errors == ("chunk 0: HTTP 401",)
+    assert result.errors == (
+        "chunk 0: the LLM provider rejected the request (check configuration)",
+    )
 
 
 async def test_programming_errors_propagate(chunk: DiffChunk) -> None:
@@ -155,3 +157,19 @@ async def test_findings_are_normalised(chunk: DiffChunk) -> None:
     first, second = result.findings
     assert (first.confidence, first.end_line, first.title) == (1.0, None, "Two")
     assert (second.confidence, second.end_line, second.suggestion) == (0.0, 12, None)
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        LLMOutputError("1 validation error ... input_value='API_KEY = \"pk9f3Kq7...\"'"),
+        LLMRequestError('HTTP 400: {"error": "internal host llm-7.corp:8080 rejected"}'),
+    ],
+)
+async def test_error_details_never_reach_the_public_result(
+    chunk: DiffChunk, error: Exception
+) -> None:
+    result = await SecurityAgent(FakeLLM([error])).review_chunk(chunk, pr_title="t", chunk_count=1)
+
+    assert "input_value" not in result.errors[0]
+    assert "corp" not in result.errors[0]
