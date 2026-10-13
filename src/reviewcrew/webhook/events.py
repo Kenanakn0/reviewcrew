@@ -14,6 +14,7 @@ class PullRequest(BaseModel):
     title: str
     draft: bool = False
     head: Commit
+    base: Commit
 
 
 class Repository(BaseModel):

@@ -8,6 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from reviewcrew.diff.models import FileDiff
+from reviewcrew.repo_config.globs import matches_any
 
 SkipReason = Literal[
     "removed",
@@ -19,6 +20,7 @@ SkipReason = Literal[
     "minified",
     "generated",
     "too_large",
+    "ignored",
 ]
 
 DEFAULT_LOCK_FILES = frozenset(
@@ -68,6 +70,8 @@ class FilterConfig(BaseModel):
     generated_globs: tuple[str, ...] = DEFAULT_GENERATED_GLOBS
     # Files with more added + removed lines than this are skipped as too large to review.
     max_changed_lines: int = Field(default=1000, ge=1)
+    # Extra patterns from the repository's `.reviewcrew.yml` (see repo_config.globs).
+    ignore_globs: tuple[str, ...] = ()
 
 
 class SkippedFile(BaseModel):
@@ -91,6 +95,8 @@ def skip_reason(file: FileDiff, config: FilterConfig) -> SkipReason | None:
 
     if file.status == "removed":
         return "removed"
+    if config.ignore_globs and matches_any(file.path, config.ignore_globs):
+        return "ignored"
     if file.is_binary:
         return "binary"
     if file.is_submodule:

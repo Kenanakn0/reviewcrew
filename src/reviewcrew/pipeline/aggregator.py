@@ -6,7 +6,7 @@ from difflib import SequenceMatcher
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from reviewcrew.agents.models import SEVERITY_ORDER, Finding
+from reviewcrew.agents.models import SEVERITY_ORDER, Finding, Severity
 
 _STOPWORDS = frozenset(
     [
@@ -42,6 +42,7 @@ class AggregationConfig(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
+    min_severity: Severity = "low"
     # Findings on the same file whose line ranges are at most this far apart may be duplicates.
     line_proximity: int = Field(default=3, ge=0)
     # Title similarity (0-1) above which two nearby findings are considered the same issue.
@@ -53,6 +54,7 @@ class AggregationResult(BaseModel):
 
     findings: tuple[Finding, ...]  # deduplicated, most severe first
     below_confidence: int  # dropped for low confidence
+    below_severity: int = 0  # dropped by the repository's min_severity
     duplicates_merged: int
 
 
@@ -115,10 +117,12 @@ def aggregate(
     config = config or AggregationConfig()
     all_findings = list(findings)
     confident = [f for f in all_findings if f.confidence >= config.min_confidence]
+    severity_cutoff = SEVERITY_ORDER[config.min_severity]
+    severe_enough = [f for f in confident if SEVERITY_ORDER[f.severity] <= severity_cutoff]
 
     kept: list[Finding] = []
     merged = 0
-    for candidate in sorted(confident, key=rank_key):
+    for candidate in sorted(severe_enough, key=rank_key):
         for index, existing in enumerate(kept):
             if is_duplicate(existing, candidate, config):
                 if candidate.confidence > existing.confidence:
@@ -131,5 +135,6 @@ def aggregate(
     return AggregationResult(
         findings=tuple(sorted(kept, key=rank_key)),
         below_confidence=len(all_findings) - len(confident),
+        below_severity=len(confident) - len(severe_enough),
         duplicates_merged=merged,
     )
