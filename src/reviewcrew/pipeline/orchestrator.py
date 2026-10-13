@@ -27,10 +27,11 @@ async def run_agents(
     """Return one result per agent, in the order of `agents`.
 
     Agents run in parallel; within an agent, chunks run in parallel too. A shared
-    semaphore caps simultaneous LLM calls (rate limits). Each agent has its own deadline:
-    chunks finished in time are kept, the rest are cancelled and reported as errors. Any
-    exception is confined to the chunk that raised it, so one failing agent never stops
-    the others or the review. With a `budget`, chunks that would exceed it are skipped.
+    semaphore caps simultaneous LLM calls (rate limits). Work is queued chunk by chunk,
+    alternating between agents, so a limited token budget is shared fairly instead of the
+    first agent taking all of it. Each agent has its own deadline: chunks finished in time
+    are kept, the rest are cancelled and reported. Any exception is confined to the chunk
+    that raised it, so one failing agent never stops the others or the review.
     """
     semaphore = asyncio.Semaphore(max_concurrent_calls)
     budget = budget or TokenBudget(limit=None)
@@ -42,7 +43,7 @@ async def run_agents(
                 + chunk.estimated_tokens
                 + OUTPUT_ALLOWANCE_TOKENS
             )
-            if not budget.try_reserve(estimate):
+            if not await budget.reserve(estimate):
                 logger.warning(
                     "%s agent: skipping chunk %d, token budget exhausted", agent.name, chunk.index
                 )
@@ -53,14 +54,20 @@ async def run_agents(
                 usage = result.usage
                 return result
             finally:
-                budget.settle(estimate, usage)
+                await budget.settle(estimate, usage)
 
-    async def run_agent(agent: BaseAgent) -> AgentResult:
-        started = time.monotonic()
-        tasks = [asyncio.create_task(review(agent, chunk)) for chunk in chunks]
+    # Chunk-major creation order: semaphore waiters are served first come, first served.
+    tasks: dict[tuple[int, int], asyncio.Task[AgentResult]] = {}
+    for chunk_index, chunk in enumerate(chunks):
+        for agent_index, agent in enumerate(agents):
+            tasks[agent_index, chunk_index] = asyncio.create_task(review(agent, chunk))
+    started = time.monotonic()
+
+    async def collect(agent_index: int, agent: BaseAgent) -> AgentResult:
+        mine = [tasks[agent_index, chunk_index] for chunk_index in range(len(chunks))]
         result = AgentResult(agent=agent.name)
-        if tasks:
-            done, pending = await asyncio.wait(tasks, timeout=agent_timeout_seconds)
+        if mine:
+            done, pending = await asyncio.wait(mine, timeout=agent_timeout_seconds)
             for task in pending:
                 task.cancel()
             if pending:
@@ -70,16 +77,16 @@ async def run_agents(
                     agent.name,
                     agent_timeout_seconds,
                     len(pending),
-                    len(tasks),
+                    len(mine),
                 )
                 result += AgentResult(
                     agent=agent.name,
                     errors=(
                         f"timed out after {agent_timeout_seconds:g}s; "
-                        f"{len(pending)} of {len(tasks)} chunks not reviewed",
+                        f"{len(pending)} of {len(mine)} chunks not reviewed",
                     ),
                 )
-            for task, chunk in zip(tasks, chunks, strict=True):
+            for task, chunk in zip(mine, chunks, strict=True):
                 if task not in done:
                     continue
                 exc = task.exception()
@@ -98,4 +105,6 @@ async def run_agents(
                     result += task.result()
         return result.model_copy(update={"duration_seconds": time.monotonic() - started})
 
-    return list(await asyncio.gather(*(run_agent(agent) for agent in agents)))
+    return list(
+        await asyncio.gather(*(collect(index, agent) for index, agent in enumerate(agents)))
+    )
