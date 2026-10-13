@@ -11,6 +11,7 @@ import httpx
 import pytest
 import respx
 from arq import ArqRedis, Worker
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from reviewcrew import worker as worker_module
 from reviewcrew.config import Settings
@@ -243,3 +244,19 @@ async def test_permanent_github_errors_are_not_retried(
 
     with pytest.raises(httpx.HTTPStatusError):
         await review_pull_request_job(job_ctx(claims), event.model_dump(mode="json"))
+
+
+def test_worker_exits_cleanly_when_redis_goes_away(
+    settings: Settings, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    def lose_redis(*args: Any, **kwargs: Any) -> None:
+        raise RedisConnectionError("Connection closed by server.")
+
+    monkeypatch.setattr(worker_module, "get_settings", lambda: settings)
+    monkeypatch.setattr(worker_module, "run_worker", lose_redis)
+
+    with pytest.raises(SystemExit) as exit_info:
+        worker_module.run()
+
+    assert exit_info.value.code == 1
+    assert "Lost the connection to Redis" in caplog.text

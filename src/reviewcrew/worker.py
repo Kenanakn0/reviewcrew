@@ -10,6 +10,7 @@ from typing import Any, Literal
 import httpx
 from arq import Retry, func, run_worker
 from arq.connections import RedisSettings
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 from reviewcrew.config import Settings, get_settings
 from reviewcrew.github.auth import InstallationTokenProvider
@@ -103,12 +104,22 @@ class WorkerSettings:
 
 
 def run() -> None:
-    """Entry point for `uv run reviewcrew-worker`."""
+    """Entry point for `uv run reviewcrew-worker`.
+
+    arq does not survive losing its Redis connection. Instead of a long traceback, the worker
+    logs one line and exits non-zero so its supervisor (Docker's restart policy, systemd, ...)
+    starts a fresh one; queued jobs and review claims live in Redis and are not lost.
+    """
     settings = get_settings()
-    run_worker(
-        WorkerSettings,  # type: ignore[arg-type]  # arq's settings protocol is untyped here
-        redis_settings=RedisSettings.from_dsn(str(settings.redis_url)),
-        job_timeout=settings.review_job_timeout_seconds,
-        max_jobs=settings.worker_max_jobs,
-        ctx={"settings": settings},
-    )
+    configure_logging(settings.log_level)
+    try:
+        run_worker(
+            WorkerSettings,  # type: ignore[arg-type]  # arq's settings protocol is untyped here
+            redis_settings=RedisSettings.from_dsn(str(settings.redis_url)),
+            job_timeout=settings.review_job_timeout_seconds,
+            max_jobs=settings.worker_max_jobs,
+            ctx={"settings": settings},
+        )
+    except RedisConnectionError as exc:
+        logger.error("Lost the connection to Redis (%s); exiting so the worker is restarted", exc)
+        raise SystemExit(1) from None
