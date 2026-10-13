@@ -8,7 +8,7 @@ from contextlib import AsyncExitStack
 from typing import Any, Literal
 
 import httpx
-from arq import func, run_worker
+from arq import Retry, func, run_worker
 from arq.connections import RedisSettings
 
 from reviewcrew.config import Settings, get_settings
@@ -24,6 +24,9 @@ from reviewcrew.webhook.events import PullRequestEvent
 logger = logging.getLogger(__name__)
 
 Context = dict[str, Any]
+
+MAX_JOB_TRIES = 3
+RETRY_BASE_DELAY_SECONDS = 30  # multiplied by the attempt number
 
 
 async def startup(ctx: Context) -> None:
@@ -56,6 +59,15 @@ async def shutdown(ctx: Context) -> None:
         await stack.aclose()
 
 
+def is_transient_github_error(exc: BaseException) -> bool:
+    """Network failures, rate limits and GitHub 5xx are worth another attempt."""
+    if isinstance(exc, httpx.TransportError):
+        return True
+    return isinstance(exc, httpx.HTTPStatusError) and (
+        exc.response.status_code == 429 or exc.response.status_code >= 500
+    )
+
+
 async def review_pull_request_job(
     ctx: Context, payload: dict[str, Any]
 ) -> Literal["reviewed", "duplicate"]:
@@ -69,9 +81,13 @@ async def review_pull_request_job(
         await review_pull_request(
             event, github=ctx["github"], llm=ctx["llm"], options=ctx["options"]
         )
-    except BaseException:
+    except BaseException as exc:
         # Includes cancellation on shutdown, after which arq re-runs the job.
         await claims.release(key)
+        if is_transient_github_error(exc):
+            delay = RETRY_BASE_DELAY_SECONDS * ctx.get("job_try", 1)
+            logger.warning("Transient GitHub error for %s, retrying in %ds: %s", key, delay, exc)
+            raise Retry(defer=delay) from exc
         raise
     await claims.complete(key)
     return "reviewed"
@@ -80,7 +96,7 @@ async def review_pull_request_job(
 class WorkerSettings:
     """Static part of the worker configuration; `run()` adds the environment-specific rest."""
 
-    functions = (func(review_pull_request_job, name=REVIEW_JOB, max_tries=3),)
+    functions = (func(review_pull_request_job, name=REVIEW_JOB, max_tries=MAX_JOB_TRIES),)
     on_startup = startup
     on_shutdown = shutdown
     keep_result = 0  # idempotency lives in ReviewClaims; a kept result would block redelivery

@@ -207,3 +207,39 @@ async def test_worker_startup_and_shutdown(settings: Settings, pool: ArqRedis) -
         assert isinstance(ctx["claims"], ReviewClaims)
     finally:
         await shutdown(ctx)
+
+
+def _status_error(status: int) -> httpx.HTTPStatusError:
+    request = httpx.Request("POST", "https://api.github.com/x")
+    return httpx.HTTPStatusError(
+        "error", request=request, response=httpx.Response(status, request=request)
+    )
+
+
+@pytest.mark.parametrize(
+    "error",
+    [_status_error(502), _status_error(429), httpx.ConnectError("reset")],
+)
+async def test_transient_github_errors_are_retried_later(
+    claims: ReviewClaims,
+    event: PullRequestEvent,
+    monkeypatch: pytest.MonkeyPatch,
+    error: Exception,
+) -> None:
+    monkeypatch.setattr(worker_module, "review_pull_request", Recorder(error))
+    ctx = job_ctx(claims) | {"job_try": 2}
+
+    with pytest.raises(arq.Retry) as retry:
+        await review_pull_request_job(ctx, event.model_dump(mode="json"))
+
+    assert retry.value.defer_score == 2 * worker_module.RETRY_BASE_DELAY_SECONDS * 1000
+    assert await claims.claim(review_key(event))  # released for the retry
+
+
+async def test_permanent_github_errors_are_not_retried(
+    claims: ReviewClaims, event: PullRequestEvent, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(worker_module, "review_pull_request", Recorder(_status_error(404)))
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await review_pull_request_job(job_ctx(claims), event.model_dump(mode="json"))
