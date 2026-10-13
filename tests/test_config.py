@@ -109,3 +109,35 @@ def test_chunk_budget_below_minimum_is_rejected(monkeypatch: pytest.MonkeyPatch)
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+@pytest.mark.usefixtures("required_env")
+def test_llm_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("LLM_PROVIDER", "LLM_MODEL", "LLM_EFFORT", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.llm_provider == "anthropic"
+    assert settings.llm_model == "claude-opus-5-5"
+    assert settings.llm_effort == "high"
+    assert settings.anthropic_api_key is None  # the SDK can still find it on its own
+
+
+@pytest.mark.usefixtures("required_env")
+def test_openai_compat_requires_a_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai_compat")
+    monkeypatch.delenv("OPENAI_COMPAT_BASE_URL", raising=False)
+
+    with pytest.raises(ValidationError, match="OPENAI_COMPAT_BASE_URL"):
+        Settings(_env_file=None)
+
+    monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", "http://localhost:11434/v1")
+    assert Settings(_env_file=None).llm_provider == "openai_compat"
+
+
+@pytest.mark.usefixtures("required_env")
+def test_api_key_is_masked(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-very-secret")
+
+    assert "sk-ant-very-secret" not in repr(Settings(_env_file=None))

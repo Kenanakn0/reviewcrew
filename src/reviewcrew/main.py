@@ -12,11 +12,13 @@ from fastapi import FastAPI
 from pydantic import BaseModel
 
 from reviewcrew import __version__
+from reviewcrew.agents.security import SecurityAgent
 from reviewcrew.config import Settings, get_settings
 from reviewcrew.github.auth import InstallationTokenProvider
 from reviewcrew.github.client import GitHubClient
 from reviewcrew.github.constants import USER_AGENT
-from reviewcrew.pipeline.acknowledge import acknowledge_pull_request
+from reviewcrew.llm.factory import open_llm_provider
+from reviewcrew.pipeline.review import review_pull_request
 from reviewcrew.webhook.router import PullRequestHandler
 from reviewcrew.webhook.router import router as webhook_router
 
@@ -33,20 +35,24 @@ def _configure_logging(level: str) -> None:
 
 @asynccontextmanager
 async def _github_lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Open one shared GitHub HTTP client for the app's lifetime and wire the PR handler."""
+    """Open the shared GitHub and LLM clients for the app's lifetime and wire the PR handler."""
     settings: Settings = app.state.settings
     private_key = settings.github_private_key_path.read_text(encoding="utf-8")
-    async with httpx.AsyncClient(
-        base_url=str(settings.github_api_url),
-        headers={"User-Agent": USER_AGENT},
-        timeout=settings.github_timeout_seconds,
-    ) as http:
+    async with (
+        httpx.AsyncClient(
+            base_url=str(settings.github_api_url),
+            headers={"User-Agent": USER_AGENT},
+            timeout=settings.github_timeout_seconds,
+        ) as http,
+        open_llm_provider(settings) as llm,
+    ):
         tokens = InstallationTokenProvider(
             http, client_id=settings.github_app_client_id, private_key=private_key
         )
         app.state.pr_handler = partial(
-            acknowledge_pull_request,
+            review_pull_request,
             github=GitHubClient(http, tokens),
+            agents=[SecurityAgent(llm, language=settings.review_language)],
             options=settings.diff_options(),
         )
         yield
