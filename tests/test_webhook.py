@@ -1,6 +1,6 @@
 import json
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 import pytest
@@ -13,14 +13,20 @@ from tests.helpers import WEBHOOK_SECRET, pull_request_payload
 
 
 class RecordingHandler:
-    def __init__(self, *, fail: bool = False) -> None:
+    """Stands in for the queue: records events and returns a scripted outcome."""
+
+    def __init__(
+        self, *, fail: bool = False, outcome: Literal["queued", "duplicate"] = "queued"
+    ) -> None:
         self.events: list[PullRequestEvent] = []
         self.fail = fail
+        self.outcome: Literal["queued", "duplicate"] = outcome
 
-    async def __call__(self, event: PullRequestEvent) -> None:
+    async def __call__(self, event: PullRequestEvent) -> Literal["queued", "duplicate"]:
         self.events.append(event)
         if self.fail:
-            raise RuntimeError("boom")
+            raise ConnectionError("redis down")
+        return self.outcome
 
 
 @pytest.fixture
@@ -30,7 +36,7 @@ def handler() -> RecordingHandler:
 
 @pytest.fixture
 async def client(settings: Settings, handler: RecordingHandler) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(settings, pr_handler=handler)
+    app = create_app(settings, dispatch=handler)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
@@ -131,14 +137,24 @@ async def test_malformed_payload_returns_400(client: httpx.AsyncClient) -> None:
     assert response.status_code == 400
 
 
-async def test_handler_failure_does_not_break_the_response(
+async def test_queue_failure_returns_503_so_github_can_redeliver(
     settings: Settings, caplog: pytest.LogCaptureFixture
 ) -> None:
     failing = RecordingHandler(fail=True)
-    transport = httpx.ASGITransport(app=create_app(settings, pr_handler=failing))
+    transport = httpx.ASGITransport(app=create_app(settings, dispatch=failing))
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         response = await _deliver(client, pull_request_payload())
 
-    assert response.status_code == 202
-    assert len(failing.events) == 1
-    assert "Failed to process delivery delivery-1 for octo/demo#7" in caplog.text
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Review queue unavailable"}
+    assert "Could not queue delivery delivery-1" in caplog.text
+
+
+async def test_duplicate_delivery_is_acknowledged_without_queuing(settings: Settings) -> None:
+    duplicate = RecordingHandler(outcome="duplicate")
+    transport = httpx.ASGITransport(app=create_app(settings, dispatch=duplicate))
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        response = await _deliver(client, pull_request_payload())
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "duplicate"

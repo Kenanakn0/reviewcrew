@@ -3,7 +3,7 @@
 from functools import lru_cache
 from typing import Literal, Self
 
-from pydantic import Field, FilePath, HttpUrl, SecretStr, model_validator
+from pydantic import Field, FilePath, HttpUrl, RedisDsn, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from reviewcrew.agents.models import AgentName
@@ -68,9 +68,21 @@ class Settings(BaseSettings):
     review_min_confidence: float = Field(default=0.5, ge=0.0, le=1.0)
     review_max_inline_comments: int = Field(default=20, ge=0)
     review_agent_timeout_seconds: float = Field(default=600.0, gt=0)
+    # Tokens one PR may spend across all agents; remaining chunks are skipped beyond it.
+    review_token_budget: int | None = Field(default=300_000, ge=1)
+
+    # Queue (Redis + arq).
+    redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")
+    # How long a reviewed (repo, PR, head SHA) is remembered to suppress duplicates.
+    review_dedup_ttl_seconds: int = Field(default=7 * 24 * 3600, ge=60)
+    review_job_timeout_seconds: float = Field(default=1800.0, gt=0)
+    worker_max_jobs: int = Field(default=4, ge=1)
 
     def review_options(self) -> ReviewOptions:
         return ReviewOptions(
+            agents=tuple(dict.fromkeys(self.review_agents)),
+            language=self.review_language,
+            token_budget=self.review_token_budget,
             diff=self.diff_options(),
             aggregation=AggregationConfig(min_confidence=self.review_min_confidence),
             max_inline_comments=self.review_max_inline_comments,

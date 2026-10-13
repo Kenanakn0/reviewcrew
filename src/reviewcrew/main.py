@@ -1,25 +1,21 @@
-"""FastAPI application entry point."""
+"""FastAPI application entry point: receives webhooks and queues reviews."""
 
-import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from functools import partial
 from typing import Literal
 
-import httpx
 import uvicorn
+from arq import create_pool
+from arq.connections import RedisSettings
 from fastapi import FastAPI
 from pydantic import BaseModel
 
 from reviewcrew import __version__
-from reviewcrew.agents.registry import AGENT_CLASSES
 from reviewcrew.config import Settings, get_settings
-from reviewcrew.github.auth import InstallationTokenProvider
-from reviewcrew.github.client import GitHubClient
-from reviewcrew.github.constants import USER_AGENT
-from reviewcrew.llm.factory import open_llm_provider
-from reviewcrew.pipeline.review import review_pull_request
-from reviewcrew.webhook.router import PullRequestHandler
+from reviewcrew.jobs import ReviewClaims, enqueue_review
+from reviewcrew.logging_config import configure_logging
+from reviewcrew.webhook.router import PullRequestDispatcher
 from reviewcrew.webhook.router import router as webhook_router
 
 
@@ -28,58 +24,37 @@ class HealthResponse(BaseModel):
     version: str
 
 
-def _configure_logging(level: str) -> None:
-    logging.basicConfig(format="%(asctime)s %(levelname)s %(name)s: %(message)s")
-    logging.getLogger("reviewcrew").setLevel(level)
-
-
 @asynccontextmanager
-async def _github_lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Open the shared GitHub and LLM clients for the app's lifetime and wire the PR handler."""
+async def _queue_lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Open the Redis pool used to enqueue review jobs; the worker does the actual work."""
     settings: Settings = app.state.settings
-    private_key = settings.github_private_key_path.read_text(encoding="utf-8")
-    async with (
-        httpx.AsyncClient(
-            base_url=str(settings.github_api_url),
-            headers={"User-Agent": USER_AGENT},
-            timeout=settings.github_timeout_seconds,
-        ) as http,
-        open_llm_provider(settings) as llm,
-    ):
-        tokens = InstallationTokenProvider(
-            http, client_id=settings.github_app_client_id, private_key=private_key
-        )
-        app.state.pr_handler = partial(
-            review_pull_request,
-            github=GitHubClient(http, tokens),
-            agents=[
-                AGENT_CLASSES[name](llm, language=settings.review_language)
-                for name in dict.fromkeys(settings.review_agents)
-            ],
-            options=settings.review_options(),
-        )
+    pool = await create_pool(RedisSettings.from_dsn(str(settings.redis_url)))
+    try:
+        claims = ReviewClaims(pool, ttl_seconds=settings.review_dedup_ttl_seconds)
+        app.state.dispatch = partial(enqueue_review, pool, claims)
         yield
+    finally:
+        await pool.aclose()
 
 
 def create_app(
-    settings: Settings | None = None, *, pr_handler: PullRequestHandler | None = None
+    settings: Settings | None = None, *, dispatch: PullRequestDispatcher | None = None
 ) -> FastAPI:
     """Build the FastAPI application.
 
-    Tests pass their own `Settings` and a fake `pr_handler`; in that case no GitHub
-    client is created.
+    Tests pass their own `Settings` and a fake `dispatch`; then no Redis pool is opened.
     """
     settings = settings or get_settings()
-    _configure_logging(settings.log_level)
+    configure_logging(settings.log_level)
 
     app = FastAPI(
         title="ReviewCrew",
         version=__version__,
-        lifespan=_github_lifespan if pr_handler is None else None,
+        lifespan=_queue_lifespan if dispatch is None else None,
     )
     app.state.settings = settings
-    if pr_handler is not None:
-        app.state.pr_handler = pr_handler
+    if dispatch is not None:
+        app.state.dispatch = dispatch
 
     @app.get("/health", tags=["meta"])
     async def health() -> HealthResponse:

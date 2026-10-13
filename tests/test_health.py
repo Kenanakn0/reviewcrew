@@ -1,4 +1,5 @@
 from collections.abc import AsyncIterator
+from typing import Literal
 
 import httpx
 import pytest
@@ -9,13 +10,13 @@ from reviewcrew.main import create_app
 from reviewcrew.webhook.events import PullRequestEvent
 
 
-async def _noop_handler(event: PullRequestEvent) -> None:
-    return None
+async def _noop_dispatch(event: PullRequestEvent) -> Literal["queued", "duplicate"]:
+    return "queued"
 
 
 @pytest.fixture
 async def client(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
-    app = create_app(settings, pr_handler=_noop_handler)
+    app = create_app(settings, dispatch=_noop_dispatch)
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         yield client

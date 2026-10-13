@@ -4,20 +4,25 @@ diff -> agents (parallel) -> aggregate -> verify -> one GitHub review."""
 import asyncio
 import logging
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import httpx
 
 from reviewcrew.agents.base import BaseAgent
+from reviewcrew.agents.models import AgentName
+from reviewcrew.agents.registry import AGENT_CLASSES
 from reviewcrew.diff.models import FileDiff
 from reviewcrew.diff.processor import process_diff
 from reviewcrew.github.client import GitHubClient
+from reviewcrew.llm.base import LLMProvider
 from reviewcrew.pipeline.aggregator import aggregate
+from reviewcrew.pipeline.budget import TokenBudget
 from reviewcrew.pipeline.options import ReviewOptions
 from reviewcrew.pipeline.orchestrator import run_agents
 from reviewcrew.pipeline.publisher import ReviewReport, build_review
 from reviewcrew.pipeline.verifier import verify
 from reviewcrew.redaction import secrets_in_diff
+from reviewcrew.repo_config.loader import load_repo_config
 from reviewcrew.webhook.events import PullRequestEvent
 
 logger = logging.getLogger(__name__)
@@ -55,14 +60,20 @@ async def review_pull_request(
     event: PullRequestEvent,
     *,
     github: GitHubClient,
-    agents: Sequence[BaseAgent],
+    llm: LLMProvider,
     options: ReviewOptions,
+    agent_classes: Mapping[AgentName, type[BaseAgent]] = AGENT_CLASSES,
 ) -> None:
+    """`options` are the server defaults; the repository's `.reviewcrew.yml` refines them."""
     started = time.monotonic()
     installation_id = event.installation.id
     repo = event.repository.full_name
     number = event.pull_request.number
     head_sha = event.pull_request.head.sha
+
+    repo_config = await load_repo_config(github, event)
+    options = options.with_repo_config(repo_config.config)
+    agents = [agent_classes[name](llm, language=options.language) for name in options.agents]
 
     diff_text = await github.get_pull_request_diff(installation_id, repo, number)
     diff = process_diff(diff_text, options.diff)
@@ -76,6 +87,7 @@ async def review_pull_request(
         pr_title=event.pull_request.title,
         agent_timeout_seconds=options.agent_timeout_seconds,
         max_concurrent_calls=options.max_concurrent_llm_calls,
+        budget=TokenBudget(options.token_budget),
     )
     aggregation = aggregate((f for r in results for f in r.findings), options.aggregation)
     report = ReviewReport(
@@ -83,8 +95,11 @@ async def review_pull_request(
         diff=diff,
         verified=verify(aggregation.findings, diff),
         below_confidence=aggregation.below_confidence,
+        below_severity=aggregation.below_severity,
         duplicates_merged=aggregation.duplicates_merged,
         max_inline_comments=options.max_inline_comments,
+        repo_config=repo_config,
+        token_budget=options.token_budget,
         head_sha=head_sha,
         duration_seconds=time.monotonic() - started,
     )

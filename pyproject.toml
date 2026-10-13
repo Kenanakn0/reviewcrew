@@ -9,16 +9,19 @@ authors = [
 requires-python = ">=3.12"
 dependencies = [
     "anthropic>=1.13.0",
+    "arq>=0.28.0",
     "fastapi>=0.143.0",
     "httpx>=0.28.1",
     "pydantic-settings>=2.15.0",
     "pyjwt[crypto]>=2.15.1",
+    "pyyaml>=6.0.3",
     "unidiff>=1.0.1",
     "uvicorn[standard]>=0.54.0",
 ]
 
 [project.scripts]
 reviewcrew = "reviewcrew.main:run"
+reviewcrew-worker = "reviewcrew.worker:run"
 
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14.0"]
@@ -26,12 +29,14 @@ build-backend = "uv_build"
 
 [dependency-groups]
 dev = [
+    "fakeredis>=2.39.0",
     "httpx2>=2.13.1",
     "mypy>=2.4.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "respx>=0.23.1",
     "ruff>=0.17.0",
+    "types-pyyaml>=6.0.12.20260906",
 ]
 
 [tool.ruff]
