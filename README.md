@@ -17,14 +17,19 @@ automatically. To receive real webhooks you also need a GitHub App; see
 uv sync                      # create .venv and install dependencies
 cp .env.example .env         # local configuration (never commit .env)
 
-uv run reviewcrew            # start the API on http://127.0.0.1:8000
+docker run -d -p 6379:6379 redis:8.10-alpine   # the review queue
+uv run reviewcrew            # API on http://127.0.0.1:8000 (receives webhooks)
+uv run reviewcrew-worker     # worker (performs the reviews)
 curl http://127.0.0.1:8000/health
 
 uv run ruff check .          # lint
 uv run ruff format .         # format
 uv run mypy                  # type-check (strict)
-uv run pytest                # tests
+uv run pytest                # tests (LLM and GitHub are mocked)
+uv run pytest -m live        # optional: agents against the real LLM (costs money)
 ```
+
+Per-repository settings: [docs/configuration.md](docs/configuration.md).
 
 ## License
 

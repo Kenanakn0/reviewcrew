@@ -54,13 +54,26 @@ Fill in `GITHUB_APP_CLIENT_ID`, `GITHUB_PRIVATE_KEY_PATH` (forward slashes on Wi
 
 ## 5. Run
 
+ReviewCrew has two processes: the API receives webhooks and queues work in Redis, and the
+worker performs the reviews. Start Redis first (Docker shown; any Redis 6.2+ works):
+
+```bash
+docker run -d --name reviewcrew-redis -p 6379:6379 redis:8.10-alpine
+```
+
 Terminal 1, the API:
 
 ```bash
 uv run reviewcrew
 ```
 
-Terminal 2, the webhook forwarder (requires Node.js):
+Terminal 2, the worker:
+
+```bash
+uv run reviewcrew-worker
+```
+
+Terminal 3, the webhook forwarder (requires Node.js):
 
 ```bash
 npx smee-client --url https://smee.io/<random> --target http://127.0.0.1:8000/webhook
@@ -72,5 +85,9 @@ npx smee-client --url https://smee.io/<random> --target http://127.0.0.1:8000/we
   a minute) the bot posts a review: inline comments on problematic lines plus a summary
   table. The review is always a plain comment; the bot never approves or requests changes.
 - Draft PRs are skipped until they are marked *Ready for review*.
+- Each commit is reviewed once: redelivering the webhook or reopening the PR without new
+  commits does not produce a second review. Push a new commit to get a fresh one.
+- To tune the review per repository, add a `.reviewcrew.yml` to the default branch
+  (see [configuration.md](configuration.md)).
 - In the App's **Advanced** tab, *Recent Deliveries* shows each delivery and lets you
   redeliver it.
