@@ -48,8 +48,9 @@ After **Create GitHub App**:
 cp .env.example .env
 ```
 
-Fill in `GITHUB_APP_CLIENT_ID`, `GITHUB_PRIVATE_KEY_PATH` (forward slashes on Windows)
-and `GITHUB_WEBHOOK_SECRET`.
+Fill in `GITHUB_APP_CLIENT_ID`, `GITHUB_PRIVATE_KEY_PATH` (forward slashes on Windows),
+`GITHUB_WEBHOOK_SECRET` and the LLM settings (`ANTHROPIC_API_KEY`, or
+`LLM_PROVIDER=openai_compat` with `OPENAI_COMPAT_BASE_URL` for a local Ollama).
 
 ## 5. Run
 
@@ -67,8 +68,9 @@ npx smee-client --url https://smee.io/<random> --target http://127.0.0.1:8000/we
 
 ## 6. Verify
 
-- Open a pull request in the test repository. Within a few seconds the bot comments
-  `ReviewCrew received this PR (N files changed).`
+- Open a pull request in the test repository. After the agents finish (usually well under
+  a minute) the bot posts a review: inline comments on problematic lines plus a summary
+  table. The review is always a plain comment; the bot never approves or requests changes.
 - Draft PRs are skipped until they are marked *Ready for review*.
 - In the App's **Advanced** tab, *Recent Deliveries* shows each delivery and lets you
   redeliver it.
