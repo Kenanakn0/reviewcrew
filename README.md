@@ -10,7 +10,8 @@ aggregated, verified against the diff and posted back as a single review.
 ## Development
 
 Requires [uv](https://docs.astral.sh/uv/). uv installs the pinned Python version (3.12)
-automatically.
+automatically. To receive real webhooks you also need a GitHub App; see
+[docs/github-app-setup.md](docs/github-app-setup.md).
 
 ```bash
 uv sync                      # create .venv and install dependencies
