@@ -31,6 +31,27 @@ uv run pytest -m live        # optional: agents against the real LLM (costs mone
 
 Per-repository settings: [docs/configuration.md](docs/configuration.md).
 
+## Evaluation
+
+`eval/cases/` holds 26 small pull requests with known answers: 21 contain deliberate
+problems (10 security, 7 performance, 5 missing or ineffective tests; one case has two)
+and 5 are clean, to measure false positives. Each case is a `before/` and `after/` tree
+plus a `case.yml` naming the expected findings by category, file and line.
+
+```bash
+uv run python -m eval.run                  # writes eval/results.md
+uv run python -m eval.run --update-readme  # also refreshes the table below
+```
+
+A finding counts as correct when it has the expected category and file and lies within
+two lines of the expected location. The runner uses the same LLM and review settings as
+the bot and calls the real model, so it costs money.
+
+<!-- eval-results:start -->
+*Not run against a real model yet.* Run the command above with an API key configured to
+fill in this table.
+<!-- eval-results:end -->
+
 ## License
 
 MIT (to be added).
