@@ -1,0 +1,6 @@
+title: Allow bursts in the rate limiter
+expected:
+  - category: tests
+    path: app/rate_limit.py
+    line_contains: 'self.limit = limit + burst'
+    note: behaviour changed while its tests were deleted

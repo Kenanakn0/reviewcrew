@@ -1,0 +1,7 @@
+title: Integrate the weather provider
+expected:
+  - category: security
+    path: app/weather.py
+    line_contains: 'WEATHERLY_API_TOKEN = "'
+    note: credential committed to the repository
+scored: [security, performance]

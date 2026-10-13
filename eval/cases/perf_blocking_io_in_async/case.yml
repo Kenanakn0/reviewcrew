@@ -1,0 +1,7 @@
+title: Fetch profiles from the identity service
+expected:
+  - category: performance
+    path: app/profiles.py
+    line_contains: 'requests.get('
+    note: synchronous HTTP call blocks the event loop
+scored: [security, performance]

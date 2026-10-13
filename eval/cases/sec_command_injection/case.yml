@@ -1,0 +1,7 @@
+title: Generate thumbnails for uploads
+expected:
+  - category: security
+    path: app/thumbnails.py
+    line_contains: 'shell=True'
+    note: filename from the request reaches a shell command
+scored: [security, performance]

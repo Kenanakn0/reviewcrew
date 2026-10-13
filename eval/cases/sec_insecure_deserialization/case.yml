@@ -1,0 +1,7 @@
+title: Restore the shopping cart from a cookie
+expected:
+  - category: security
+    path: app/cart.py
+    line_contains: 'pickle.loads'
+    note: untrusted cookie unpickled (remote code execution)
+scored: [security, performance]

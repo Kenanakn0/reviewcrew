@@ -1,0 +1,7 @@
+title: Export last week's events
+expected:
+  - category: performance
+    path: app/export.py
+    line_contains: 'fetchall()'
+    note: whole table loaded and filtered in Python
+scored: [security, performance]

@@ -1,0 +1,6 @@
+title: Add discount codes
+expected:
+  - category: tests
+    path: app/pricing.py
+    line_contains: 'def apply_discount'
+    note: branching business rules with no tests

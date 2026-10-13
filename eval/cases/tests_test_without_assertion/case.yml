@@ -1,0 +1,7 @@
+title: Add invoice totals with tax
+expected:
+  - category: tests
+    path: tests/test_invoice.py
+    line_contains: 'def test_invoice_total'
+    span: 3
+    note: the test can never fail, it asserts nothing

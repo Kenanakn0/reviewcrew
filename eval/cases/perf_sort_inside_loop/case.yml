@@ -1,0 +1,7 @@
+title: Show running leaderboard positions
+expected:
+  - category: performance
+    path: app/leaderboard.py
+    line_contains: 'sorted(scores'
+    note: the whole list is re-sorted on every iteration
+scored: [security, performance]

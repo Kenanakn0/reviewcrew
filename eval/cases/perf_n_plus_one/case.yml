@@ -1,0 +1,7 @@
+title: Add paid order summaries
+expected:
+  - category: performance
+    path: app/reports.py
+    line_contains: 'o.customer.name'
+    note: one query per order for customer and items
+scored: [security, performance]

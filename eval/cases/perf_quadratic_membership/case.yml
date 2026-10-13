@@ -1,0 +1,7 @@
+title: Collect unique notification emails
+expected:
+  - category: performance
+    path: app/notify.py
+    line_contains: 'not in seen'
+    note: list membership inside a loop is quadratic
+scored: [security, performance]

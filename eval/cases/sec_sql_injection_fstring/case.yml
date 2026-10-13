@@ -1,0 +1,8 @@
+title: Add user search by name
+expected:
+  - category: security
+    path: app/users.py
+    line_contains: 'f"SELECT'
+    span: 2
+    note: user input interpolated into SQL
+scored: [security, performance]

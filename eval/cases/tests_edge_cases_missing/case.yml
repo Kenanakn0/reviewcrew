@@ -1,0 +1,6 @@
+title: Parse amounts typed by users
+expected:
+  - category: tests
+    path: app/amounts.py
+    line_contains: 'def parse_amount'
+    note: only the happy path is tested; empty, negative and malformed input are not

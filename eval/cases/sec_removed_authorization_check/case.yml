@@ -1,0 +1,8 @@
+title: Simplify the admin user endpoint
+expected:
+  - category: security
+    path: app/admin.py
+    line_contains: 'def delete_user'
+    span: 4
+    note: admin check removed, any logged-in user can delete users
+scored: [security, performance]

@@ -1,0 +1,7 @@
+title: Load dashboard widgets
+expected:
+  - category: performance
+    path: web/dashboard.js
+    line_contains: 'await fetch'
+    note: independent requests awaited one after another
+scored: [security, performance]

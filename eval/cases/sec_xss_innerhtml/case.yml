@@ -1,0 +1,7 @@
+title: Render comments client-side
+expected:
+  - category: security
+    path: web/comments.js
+    line_contains: 'innerHTML'
+    note: user content inserted as HTML
+scored: [security, performance]

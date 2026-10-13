@@ -1,0 +1,7 @@
+title: Read the user from the bearer token
+expected:
+  - category: security
+    path: app/auth.py
+    line_contains: 'verify_signature'
+    note: JWT accepted without signature verification
+scored: [security, performance]

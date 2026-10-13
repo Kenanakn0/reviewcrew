@@ -1,0 +1,10 @@
+title: Add product search endpoint
+expected:
+  - category: security
+    path: app/products.py
+    line_contains: 'ORDER BY {sort}'
+    note: sort column from the query string is interpolated into SQL
+  - category: tests
+    path: app/products.py
+    line_contains: 'def search_products'
+    note: new endpoint logic without tests

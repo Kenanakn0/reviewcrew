@@ -42,7 +42,9 @@ dev = [
 [tool.ruff]
 line-length = 100
 target-version = "py312"
-src = ["src", "tests"]
+src = ["src", "."]
+# Evaluation cases are deliberately flawed sample code, not part of the project.
+extend-exclude = ["eval/cases"]
 
 [tool.ruff.lint]
 select = [
@@ -68,7 +70,8 @@ select = [
 [tool.mypy]
 python_version = "3.12"
 strict = true
-files = ["src", "tests"]
+files = ["src", "tests", "eval"]
+exclude = ["^eval/cases/"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]

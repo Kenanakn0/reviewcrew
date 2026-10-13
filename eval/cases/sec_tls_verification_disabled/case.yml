@@ -1,0 +1,7 @@
+title: Forward events to partner webhooks
+expected:
+  - category: security
+    path: app/partners.py
+    line_contains: 'verify=False'
+    note: TLS certificate verification disabled
+scored: [security, performance]

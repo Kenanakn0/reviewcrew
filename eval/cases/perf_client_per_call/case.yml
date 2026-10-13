@@ -1,0 +1,7 @@
+title: Geocode customer addresses
+expected:
+  - category: performance
+    path: app/geocode.py
+    line_contains: 'with httpx.Client() as client'
+    note: a new HTTP client (and connection) for every address
+scored: [security, performance]

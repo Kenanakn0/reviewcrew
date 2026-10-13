@@ -1,0 +1,7 @@
+title: Allow downloading uploaded files
+expected:
+  - category: security
+    path: app/files.py
+    line_contains: 'os.path.join(UPLOAD_DIR, name)'
+    note: user-controlled path segment allows ../ traversal
+scored: [security, performance]
