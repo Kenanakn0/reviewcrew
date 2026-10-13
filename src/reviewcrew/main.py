@@ -44,7 +44,11 @@ async def _github_lifespan(app: FastAPI) -> AsyncIterator[None]:
         tokens = InstallationTokenProvider(
             http, client_id=settings.github_app_client_id, private_key=private_key
         )
-        app.state.pr_handler = partial(acknowledge_pull_request, github=GitHubClient(http, tokens))
+        app.state.pr_handler = partial(
+            acknowledge_pull_request,
+            github=GitHubClient(http, tokens),
+            options=settings.diff_options(),
+        )
         yield
 
 

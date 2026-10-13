@@ -88,3 +88,24 @@ def test_github_credentials_are_required(monkeypatch: pytest.MonkeyPatch, missin
 @pytest.mark.usefixtures("required_env")
 def test_get_settings_is_cached() -> None:
     assert get_settings() is get_settings()
+
+
+@pytest.mark.usefixtures("required_env")
+def test_diff_options_follow_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DIFF_MAX_TOKENS_PER_CHUNK", "12000")
+    monkeypatch.setenv("DIFF_MAX_CHANGED_LINES_PER_FILE", "500")
+    monkeypatch.setenv("DIFF_CONTEXT_LINES", "0")
+
+    options = Settings(_env_file=None).diff_options()
+
+    assert options.max_tokens_per_chunk == 12000
+    assert options.filters.max_changed_lines == 500
+    assert options.context_lines == 0
+
+
+@pytest.mark.usefixtures("required_env")
+def test_chunk_budget_below_minimum_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DIFF_MAX_TOKENS_PER_CHUNK", "999")
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
