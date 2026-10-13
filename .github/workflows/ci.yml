@@ -37,3 +37,15 @@ jobs:
 
       - name: Pytest
         run: uv run pytest
+
+  docker:
+    name: Build the container image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build
+        run: docker build --tag reviewcrew:ci .
+
+      - name: Smoke test
+        run: docker run --rm --entrypoint python reviewcrew:ci -c "import reviewcrew.main, reviewcrew.worker"

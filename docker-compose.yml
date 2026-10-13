@@ -1,0 +1,53 @@
+# ReviewCrew: API (webhooks) + worker (reviews) + Redis (queue).
+#
+#   cp .env.example .env   # fill in GitHub App and LLM settings
+#   docker compose up --build
+#
+# GITHUB_PRIVATE_KEY_PATH in .env is the key's path on *this* machine; it is mounted into
+# the containers as a secret and the services read it from /run/secrets/github_app_key.
+
+x-reviewcrew: &reviewcrew
+  build: .
+  image: reviewcrew:latest
+  env_file: .env
+  environment:
+    APP_ENV: production
+    REDIS_URL: redis://redis:6379/0
+    GITHUB_PRIVATE_KEY_PATH: /run/secrets/github_app_key
+  secrets:
+    - github_app_key
+  depends_on:
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  app:
+    <<: *reviewcrew
+    ports:
+      - "${PORT:-8000}:8000"
+
+  worker:
+    <<: *reviewcrew
+    command: ["reviewcrew-worker"]
+    healthcheck:
+      disable: true  # no HTTP server; arq logs its own health
+
+  redis:
+    image: redis:8.10-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+secrets:
+  github_app_key:
+    file: ${GITHUB_PRIVATE_KEY_PATH:?set GITHUB_PRIVATE_KEY_PATH in .env}
+
+volumes:
+  redis-data:
