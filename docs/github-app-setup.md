@@ -54,7 +54,18 @@ Fill in `GITHUB_APP_CLIENT_ID`, `GITHUB_PRIVATE_KEY_PATH` (forward slashes on Wi
 
 ## 5. Run
 
-ReviewCrew has two processes: the API receives webhooks and queues work in Redis, and the
+**With Docker** (API, worker and Redis together):
+
+```bash
+docker compose up --build
+```
+
+`GITHUB_PRIVATE_KEY_PATH` stays the key's path on your machine; Compose mounts the file into
+the containers as a secret. On Linux hosts the containers run as UID 10001, so the key file
+must be readable by that user (for example `chmod 644` on a key kept in a private
+directory). Then start the webhook forwarder below.
+
+**Without Docker,** ReviewCrew has two processes: the API receives webhooks and queues work in Redis, and the
 worker performs the reviews. Start Redis first (Docker shown; any Redis 6.2+ works):
 
 ```bash
