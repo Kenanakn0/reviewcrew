@@ -1,0 +1,5 @@
+# Normalise line endings to LF in the repository and the working tree.
+* text=auto eol=lf
+
+# Diff fixtures must stay byte-for-byte identical (trailing tabs, no final newline...).
+tests/fixtures/** -text
