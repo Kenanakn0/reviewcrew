@@ -173,3 +173,21 @@ async def test_error_details_never_reach_the_public_result(
 
     assert "input_value" not in result.errors[0]
     assert "corp" not in result.errors[0]
+
+
+def test_deleted_files_are_listed_inside_the_untrusted_block(chunk: DiffChunk) -> None:
+    prompt = SecurityAgent(FakeLLM([])).user_prompt(
+        chunk, pr_title="t", chunk_count=1, deleted_files=("tests/test_auth.py", "app/acl.py")
+    )
+
+    marker = re.search(r"<<<UNTRUSTED_PR_DATA ([0-9a-f]{16})>>>", prompt)
+    assert marker is not None
+    listing = "Files deleted by this PR (contents not shown): tests/test_auth.py, app/acl.py"
+    assert prompt.index(marker.group(0)) < prompt.index(listing)
+    assert prompt.index(listing) < prompt.index(f"<<<END_UNTRUSTED_PR_DATA {marker.group(1)}>>>")
+
+
+def test_no_deleted_files_line_when_nothing_was_deleted(chunk: DiffChunk) -> None:
+    prompt = SecurityAgent(FakeLLM([])).user_prompt(chunk, pr_title="t", chunk_count=1)
+
+    assert "Files deleted" not in prompt

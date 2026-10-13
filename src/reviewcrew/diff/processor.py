@@ -26,6 +26,10 @@ class ProcessedDiff(BaseModel):
     skipped: tuple[SkippedFile, ...]
     chunks: tuple[DiffChunk, ...]
 
+    @property
+    def deleted_paths(self) -> tuple[str, ...]:
+        return tuple(s.path for s in self.skipped if s.reason == "removed")
+
     def is_commentable(self, path: str, line: int) -> bool:
         """Whether GitHub accepts a RIGHT-side review comment on `path:line`."""
         file = self.files.get(path)

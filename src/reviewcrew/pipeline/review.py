@@ -85,6 +85,7 @@ async def review_pull_request(
         agents,
         diff.chunks,
         pr_title=event.pull_request.title,
+        deleted_files=diff.deleted_paths,
         agent_timeout_seconds=options.agent_timeout_seconds,
         max_concurrent_calls=options.max_concurrent_llm_calls,
         budget=TokenBudget(options.token_budget),

@@ -2,6 +2,7 @@
 
 import logging
 import secrets
+from collections.abc import Sequence
 from functools import cache
 from importlib.resources import files
 from typing import ClassVar
@@ -66,23 +67,45 @@ class BaseAgent:
         )
         return f"{common}\n{load_prompt(self.name)}"
 
-    def user_prompt(self, chunk: DiffChunk, *, pr_title: str, chunk_count: int) -> str:
+    def user_prompt(
+        self,
+        chunk: DiffChunk,
+        *,
+        pr_title: str,
+        chunk_count: int,
+        deleted_files: Sequence[str] = (),
+    ) -> str:
         marker = secrets.token_hex(8)
+        # Deleted files are filtered out of the diff, but their names matter: removing a
+        # test file or a security module is itself worth reviewing.
+        deleted = (
+            f"Files deleted by this PR (contents not shown): {', '.join(deleted_files)}\n"
+            if deleted_files
+            else ""
+        )
         return (
             f"Review part {chunk.index + 1} of {chunk_count} of this pull request.\n"
             f"Data identifier: {marker}\n\n"
             f"<<<UNTRUSTED_PR_DATA {marker}>>>\n"
-            f"PR title: {pr_title}\n\n"
+            f"PR title: {pr_title}\n"
+            f"{deleted}\n"
             f"{chunk.text}\n"
             f"<<<END_UNTRUSTED_PR_DATA {marker}>>>"
         )
 
     async def review_chunk(
-        self, chunk: DiffChunk, *, pr_title: str, chunk_count: int
+        self,
+        chunk: DiffChunk,
+        *,
+        pr_title: str,
+        chunk_count: int,
+        deleted_files: Sequence[str] = (),
     ) -> AgentResult:
         """Review one chunk. Never raises: failures become an empty result with an error."""
         system = self.system_prompt
-        user = self.user_prompt(chunk, pr_title=pr_title, chunk_count=chunk_count)
+        user = self.user_prompt(
+            chunk, pr_title=pr_title, chunk_count=chunk_count, deleted_files=deleted_files
+        )
         usage = TokenUsage()
         last_error = ""
         for attempt in range(1, MAX_OUTPUT_ATTEMPTS + 1):

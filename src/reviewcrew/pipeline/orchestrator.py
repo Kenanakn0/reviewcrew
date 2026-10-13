@@ -23,6 +23,7 @@ async def run_agents(
     agent_timeout_seconds: float,
     max_concurrent_calls: int,
     budget: TokenBudget | None = None,
+    deleted_files: Sequence[str] = (),
 ) -> list[AgentResult]:
     """Return one result per agent, in the order of `agents`.
 
@@ -50,7 +51,12 @@ async def run_agents(
                 return AgentResult(agent=agent.name, skipped_chunks=1)
             usage = TokenUsage()
             try:
-                result = await agent.review_chunk(chunk, pr_title=pr_title, chunk_count=len(chunks))
+                result = await agent.review_chunk(
+                    chunk,
+                    pr_title=pr_title,
+                    chunk_count=len(chunks),
+                    deleted_files=deleted_files,
+                )
                 usage = result.usage
                 return result
             finally:
