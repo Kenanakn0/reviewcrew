@@ -118,7 +118,7 @@ async def test_anthropic_omits_fallback_for_models_without_it() -> None:
     ("response", "message"),
     [
         (_message("not json"), "did not match"),
-        (_message('{"findings": [{"path": 1}]}'), "did not match"),
+        (_message('{"findings": "none"}'), "did not match"),
         (_message("", stop_reason="refusal", stop_details=None), "refused"),
         (_message('{"findings": [', stop_reason="max_tokens"), "truncated"),
     ],

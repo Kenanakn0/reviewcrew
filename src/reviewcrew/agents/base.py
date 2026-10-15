@@ -133,6 +133,13 @@ class BaseAgent:
                     errors=(f"chunk {chunk.index}: {public_reason(exc)}",),
                 )
             usage += response.usage
+            if response.value.dropped_findings:
+                logger.warning(
+                    "%s agent: dropped %d malformed finding(s) in chunk %d",
+                    self.name,
+                    response.value.dropped_findings,
+                    chunk.index,
+                )
             findings = tuple(
                 finding
                 for draft in response.value.findings

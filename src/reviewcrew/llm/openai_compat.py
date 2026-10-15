@@ -1,6 +1,7 @@
 """OpenAI-compatible `/chat/completions` endpoints (e.g. Ollama for free local testing)."""
 
 import logging
+import re
 import time
 from typing import Any
 
@@ -21,6 +22,23 @@ from reviewcrew.llm.schema import strict_json_schema
 logger = logging.getLogger(__name__)
 
 _TRANSIENT_STATUS = frozenset({408, 409, 429})
+_FENCE = re.compile(r"^```[a-zA-Z]*\s*\n(?P<body>.*?)\n?```\s*$", re.DOTALL)
+
+
+def extract_json_object(text: str) -> str:
+    """The JSON object in a reply, tolerating Markdown fences or surrounding prose.
+
+    Endpoints that enforce the schema return bare JSON; smaller local models sometimes
+    still wrap it, which would otherwise cost a retry.
+    """
+    stripped = text.strip()
+    fenced = _FENCE.match(stripped)
+    if fenced:
+        stripped = fenced.group("body").strip()
+    if stripped.startswith("{"):
+        return stripped
+    start, end = stripped.find("{"), stripped.rfind("}")
+    return stripped[start : end + 1] if 0 <= start < end else stripped
 
 
 class _Message(pydantic.BaseModel):
@@ -134,7 +152,7 @@ class OpenAICompatProvider:
         if choice.finish_reason == "length":
             raise LLMOutputError("output truncated at max_tokens", usage=usage)
         try:
-            value = schema.model_validate_json(choice.message.content or "")
+            value = schema.model_validate_json(extract_json_object(choice.message.content or ""))
         except pydantic.ValidationError as exc:
             raise LLMOutputError(
                 f"response did not match {schema.__name__}: {exc}", usage=usage

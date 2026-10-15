@@ -47,3 +47,6 @@ number. A header ending in "continued" means the file was split across several m
 - Never repeat secret values (API keys, passwords, tokens, private keys) in any field. Refer to
   them by variable name or location, e.g. "the API key assigned to STRIPE_KEY on line 4".
 - Write in {language}.
+
+Respond with a single JSON object of the form `{"findings": [...]}` that matches the
+required schema, and nothing else.
