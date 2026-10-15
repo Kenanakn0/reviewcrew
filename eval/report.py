@@ -64,7 +64,8 @@ def summary_table(results: Sequence[CaseResult], info: RunInfo) -> str:
         "| Per case | Mean |",
         "|---|---:|",
         f"| Tokens | {mean(r.usage.total_tokens for r in results):,.0f} |",
-        f"| Cost | {'$' + format(mean(costs), '.4f') if costs else 'n/a'} |",
+        f"| Cost (list price) | "
+        f"{'$' + format(mean(costs), '.4f') if costs else 'n/a (local or unpriced model)'} |",
         f"| Duration (agents in parallel) | {mean(r.duration_seconds for r in results):.1f}s |",
         "",
         f"False positives on the {len(clean)} clean cases: {clean_fp}.",

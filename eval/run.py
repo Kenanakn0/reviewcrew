@@ -94,6 +94,20 @@ async def evaluate(
     return list(await asyncio.gather(*(one(case) for case in cases)))
 
 
+def _describe_settings(settings: CoreSettings) -> str:
+    """How the numbers were produced, printed next to them in the report."""
+    if settings.llm_provider == "anthropic":
+        provider = f"Anthropic API, effort {settings.llm_effort}"
+    else:
+        host = settings.openai_compat_base_url.host if settings.openai_compat_base_url else "?"
+        local = host in ("localhost", "127.0.0.1", "host.docker.internal")
+        provider = f"OpenAI-compatible endpoint{' (local)' if local else f' at {host}'}"
+    return (
+        f"{provider}, min confidence {settings.review_min_confidence}, "
+        f"chunks up to {settings.diff_max_tokens_per_chunk} tokens"
+    )
+
+
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(prog="python -m eval.run", description=__doc__)
     parser.add_argument("--cases", type=Path, default=CASES_DIR, help="cases directory")
@@ -119,8 +133,7 @@ async def main(argv: Sequence[str] | None = None) -> int:
     options = settings.review_options().model_copy(update={"token_budget": None})
     info = RunInfo(
         model=settings.llm_model,
-        settings=(f"effort {settings.llm_effort}, " if settings.llm_provider == "anthropic" else "")
-        + f"min confidence {settings.review_min_confidence}",
+        settings=_describe_settings(settings),
         date=datetime.now(UTC).strftime("%Y-%m-%d"),
     )
 

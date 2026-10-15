@@ -20,6 +20,7 @@ from eval.report import (
 )
 from eval.scoring import Counts, score_case
 from reviewcrew.agents.models import AgentReport, Finding, FindingDraft
+from reviewcrew.config import CoreSettings
 from reviewcrew.diff.parser import parse_diff
 from reviewcrew.diff.processor import process_diff
 from reviewcrew.llm.base import LLMProvider, TokenUsage
@@ -319,7 +320,7 @@ def test_summary_table() -> None:
 
     assert "Model `m` (effort high) · 2 cases, 1 of them clean · 2026-10-13" in table
     assert "| security | 2 | 2 | 1 | 1 | 1 | 50% | 50% | 50% |" in table
-    assert "| Cost | $0.0200 |" in table
+    assert "| Cost (list price) | $0.0200 |" in table
     assert "False positives on the 1 clean cases: 1." in table
 
 
@@ -333,3 +334,34 @@ def test_full_report_lists_every_case() -> None:
 def test_embed_requires_markers() -> None:
     with pytest.raises(ValueError, match="markers"):
         embed_in_readme("# no markers\n", "table")
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        (
+            {"LLM_PROVIDER": "openai_compat", "LLM_MODEL": "qwen2.5-coder:7b",
+             "OPENAI_COMPAT_BASE_URL": "http://localhost:11434/v1"},
+            "OpenAI-compatible endpoint (local), min confidence 0.5",
+        ),
+        ({"LLM_PROVIDER": "anthropic", "LLM_EFFORT": "high"}, "Anthropic API, effort high"),
+    ],
+)  # fmt: skip
+def test_report_states_how_results_were_produced(
+    monkeypatch: pytest.MonkeyPatch, env: dict[str, str], expected: str
+) -> None:
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+
+    description = run_module._describe_settings(CoreSettings(_env_file=None))
+
+    assert description.startswith(expected)
+
+
+def test_unpriced_models_have_no_invented_cost() -> None:
+    info = RunInfo(model="qwen2.5-coder:7b", settings="local", date="d")
+
+    table = summary_table([_result("a", True, Counts(), cost=None)], info)
+
+    assert "| Cost (list price) | n/a (local or unpriced model) |" in table
+    assert "$" not in table
