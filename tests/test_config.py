@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 from pydantic_settings import SettingsError
 
-from reviewcrew.config import Settings, get_settings
+from reviewcrew.config import CoreSettings, Settings, get_settings
 
 
 @pytest.fixture
@@ -126,15 +126,41 @@ def test_llm_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.mark.usefixtures("required_env")
-def test_openai_compat_requires_a_base_url(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_openai_compat_requires_a_base_url_and_a_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_PROVIDER", "openai_compat")
     monkeypatch.delenv("OPENAI_COMPAT_BASE_URL", raising=False)
+    monkeypatch.delenv("LLM_MODEL", raising=False)
 
     with pytest.raises(ValidationError, match="OPENAI_COMPAT_BASE_URL"):
         Settings(_env_file=None)
 
     monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", "http://localhost:11434/v1")
-    assert Settings(_env_file=None).llm_provider == "openai_compat"
+    with pytest.raises(ValidationError, match="LLM_MODEL is required"):
+        Settings(_env_file=None)  # a Claude model name must not leak into Ollama
+
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    settings = Settings(_env_file=None)
+    assert (settings.llm_provider, settings.llm_model) == ("openai_compat", "qwen2.5-coder:7b")
+
+
+@pytest.mark.usefixtures("required_env")
+def test_ollama_setup_needs_no_anthropic_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai_compat")
+    monkeypatch.setenv("OPENAI_COMPAT_BASE_URL", "http://localhost:11434/v1")
+    monkeypatch.setenv("LLM_MODEL", "qwen2.5-coder:7b")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "")  # left empty in .env
+
+    settings = Settings(_env_file=None)
+
+    assert settings.anthropic_api_key is None
+
+
+@pytest.mark.usefixtures("required_env")
+@pytest.mark.parametrize("name", ["OPENAI_COMPAT_BASE_URL", "OPENAI_COMPAT_API_KEY"])
+def test_empty_values_mean_unset(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.setenv(name, "  ")
+
+    assert getattr(Settings(_env_file=None), name.lower()) is None
 
 
 @pytest.mark.usefixtures("required_env")
@@ -186,3 +212,19 @@ def test_agent_list_must_be_json(monkeypatch: pytest.MonkeyPatch) -> None:
 
     with pytest.raises(SettingsError, match="review_agents"):
         Settings(_env_file=None)
+
+
+def test_env_example_is_a_valid_local_llm_configuration(monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("LLM_PROVIDER", "LLM_MODEL", "OPENAI_COMPAT_BASE_URL", "ANTHROPIC_API_KEY"):
+        monkeypatch.delenv(name, raising=False)
+    example = Path(__file__).parent.parent / ".env.example"
+
+    settings = CoreSettings(_env_file=example)
+
+    assert settings.llm_provider == "openai_compat"
+    assert settings.llm_model == "qwen2.5-coder:7b"
+    assert str(settings.openai_compat_base_url) == "http://localhost:11434/v1"
+    assert settings.anthropic_api_key is None
+    options = settings.review_options()
+    assert options.diff.max_tokens_per_chunk == 4000
+    assert options.max_concurrent_llm_calls == 1

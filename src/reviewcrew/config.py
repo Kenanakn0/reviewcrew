@@ -3,7 +3,15 @@
 from functools import lru_cache
 from typing import Literal, Self
 
-from pydantic import Field, FilePath, HttpUrl, RedisDsn, SecretStr, model_validator
+from pydantic import (
+    Field,
+    FilePath,
+    HttpUrl,
+    RedisDsn,
+    SecretStr,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from reviewcrew.agents.models import AgentName
@@ -13,6 +21,8 @@ from reviewcrew.diff.processor import DiffOptions
 from reviewcrew.llm.anthropic_provider import Effort
 from reviewcrew.pipeline.aggregator import AggregationConfig
 from reviewcrew.pipeline.options import ReviewOptions
+
+DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5"
 
 
 def _all_agents() -> list[AgentName]:
@@ -36,14 +46,15 @@ class CoreSettings(BaseSettings):
     diff_max_changed_lines_per_file: int = Field(default=1000, ge=1)
     diff_context_lines: int = Field(default=5, ge=0)
 
-    # LLM.
+    # LLM. "openai_compat" covers any OpenAI-compatible endpoint, e.g. a local Ollama.
     llm_provider: Literal["anthropic", "openai_compat"] = "anthropic"
-    llm_model: str = Field(default="claude-opus-5-5", min_length=1)
+    # Defaults to DEFAULT_ANTHROPIC_MODEL for Anthropic; required for openai_compat.
+    llm_model: str = ""
     llm_effort: Effort = "high"  # Anthropic only: depth of reasoning vs. token spend
     llm_max_output_tokens: int = Field(default=16000, ge=256)
     llm_timeout_seconds: float = Field(default=300.0, gt=0)
     llm_max_retries: int = Field(default=3, ge=0)
-    # Optional: the Anthropic SDK also finds ANTHROPIC_API_KEY in the process environment.
+    # Only used with LLM_PROVIDER=anthropic (the SDK also finds ANTHROPIC_API_KEY itself).
     anthropic_api_key: SecretStr | None = None
     anthropic_refusal_fallback: bool = True
     # e.g. http://localhost:11434/v1 for Ollama.
@@ -81,10 +92,28 @@ class CoreSettings(BaseSettings):
             context_lines=self.diff_context_lines,
         )
 
+    @field_validator(
+        "anthropic_api_key", "openai_compat_base_url", "openai_compat_api_key", mode="before"
+    )
+    @classmethod
+    def _empty_means_unset(cls, value: object) -> object:
+        # `KEY=` in .env (or an empty variable passed through Docker Compose) means "not set".
+        return None if isinstance(value, str) and not value.strip() else value
+
     @model_validator(mode="after")
     def _check_llm_provider(self) -> Self:
-        if self.llm_provider == "openai_compat" and self.openai_compat_base_url is None:
-            raise ValueError("OPENAI_COMPAT_BASE_URL is required when LLM_PROVIDER=openai_compat")
+        if self.llm_provider == "openai_compat":
+            if self.openai_compat_base_url is None:
+                raise ValueError(
+                    "OPENAI_COMPAT_BASE_URL is required when LLM_PROVIDER=openai_compat"
+                )
+            if not self.llm_model.strip():
+                raise ValueError(
+                    "LLM_MODEL is required when LLM_PROVIDER=openai_compat "
+                    "(e.g. qwen2.5-coder:7b for Ollama)"
+                )
+        elif not self.llm_model.strip():
+            self.llm_model = DEFAULT_ANTHROPIC_MODEL
         return self
 
 

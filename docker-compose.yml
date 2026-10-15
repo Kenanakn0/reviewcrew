@@ -14,6 +14,12 @@ x-reviewcrew: &reviewcrew
     APP_ENV: production
     REDIS_URL: redis://redis:6379/0
     GITHUB_PRIVATE_KEY_PATH: /run/secrets/github_app_key
+    # Inside a container "localhost" is the container itself. A local LLM (Ollama) on the
+    # host is reached through host.docker.internal; set OPENAI_COMPAT_BASE_URL_DOCKER in
+    # .env for that, otherwise the host value is used unchanged.
+    OPENAI_COMPAT_BASE_URL: ${OPENAI_COMPAT_BASE_URL_DOCKER:-${OPENAI_COMPAT_BASE_URL:-}}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"  # Docker Desktop provides it; Linux needs this
   secrets:
     - github_app_key
   depends_on:
