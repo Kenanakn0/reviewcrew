@@ -48,9 +48,10 @@ After **Create GitHub App**:
 cp .env.example .env
 ```
 
-Fill in `GITHUB_APP_CLIENT_ID`, `GITHUB_PRIVATE_KEY_PATH` (forward slashes on Windows),
-`GITHUB_WEBHOOK_SECRET` and the LLM settings (`ANTHROPIC_API_KEY`, or
-`LLM_PROVIDER=openai_compat` with `OPENAI_COMPAT_BASE_URL` for a local Ollama).
+Fill in `GITHUB_APP_CLIENT_ID`, `GITHUB_PRIVATE_KEY_PATH` (forward slashes on Windows) and
+`GITHUB_WEBHOOK_SECRET`. The LLM settings already target a local Ollama; set it up with
+[local-llm.md](local-llm.md). To use Claude instead, set `LLM_PROVIDER=anthropic` and
+`ANTHROPIC_API_KEY`.
 
 ## 5. Run
 

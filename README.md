@@ -64,7 +64,9 @@ flowchart LR
 
 ## Quick start (Docker)
 
-You need Docker, a GitHub App and an LLM API key.
+You need Docker, a GitHub App and an LLM. The default is a free local model through
+[Ollama](https://ollama.com) ([docs/local-llm.md](docs/local-llm.md)); Anthropic's Claude API
+is an optional alternative.
 
 1. **Create the GitHub App** and install it on a test repository:
    [docs/github-app-setup.md](docs/github-app-setup.md) (about 10 minutes). Minimum
@@ -77,7 +79,8 @@ You need Docker, a GitHub App and an LLM API key.
    ```
 
    Set `GITHUB_APP_CLIENT_ID`, `GITHUB_PRIVATE_KEY_PATH` (the downloaded `.pem`, outside the
-   repository), `GITHUB_WEBHOOK_SECRET` and `ANTHROPIC_API_KEY`.
+   repository) and `GITHUB_WEBHOOK_SECRET`. The LLM settings already point at Ollama
+   (`qwen2.5-coder:7b`); for Claude set `LLM_PROVIDER=anthropic` and `ANTHROPIC_API_KEY`.
 3. **Run** the API, the worker and Redis:
 
    ```bash
@@ -113,9 +116,10 @@ that would flag it. An invalid file falls back to defaults and the summary says 
 [docs/configuration.md](docs/configuration.md).
 
 Server-side settings (model, effort, token budget, confidence threshold, timeouts, ...) are
-environment variables; see [.env.example](.env.example). The default model is
-`claude-opus-5-5`; any OpenAI-compatible endpoint (for example a local Ollama) works too
-via `LLM_PROVIDER=openai_compat`.
+environment variables; see [.env.example](.env.example). Two providers are supported:
+any OpenAI-compatible endpoint (`LLM_PROVIDER=openai_compat`, e.g. a local Ollama, the
+default in `.env.example`) and Anthropic's Claude API (`LLM_PROVIDER=anthropic`, default
+model `claude-opus-5-5`). Both use structured output with the same JSON schema.
 
 ## Evaluation
 
@@ -131,7 +135,8 @@ uv run python -m eval.run --update-readme  # also refreshes the table below
 
 A finding counts as correct when it has the expected category and file and lies within
 two lines of the expected location. The runner uses the same LLM and review settings as
-the bot and calls the real model, so it costs money.
+the bot and calls the real model (free with a local model, paid with a hosted API). The
+report states the model and provider that produced the numbers.
 
 <!-- eval-results:start -->
 *Not run against a real model yet.* Run the command above with an API key configured to
@@ -159,7 +164,8 @@ fill in this table.
 ## Limitations
 
 - **LLM judgement.** Findings can be wrong or miss real problems; the summary labels them
-  as automated suggestions. The evaluation measures this on a small, hand-written case set,
+  as automated suggestions. Small local models are noticeably weaker than large hosted
+  ones; the evaluation shows by how much on your setup. The evaluation measures this on a small, hand-written case set,
   which is no substitute for measuring on real pull requests.
 - **Diff-centric context.** Agents see the diff plus a few surrounding lines, not the whole
   repository, so issues that depend on distant code (callers, configuration) can be missed.
