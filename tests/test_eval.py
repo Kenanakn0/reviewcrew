@@ -24,7 +24,9 @@ from eval.report import (
     CaseResult,
     RunInfo,
     embed_in_readme,
+    full_repeated_report,
     full_report,
+    repeated_summary,
     summary_table,
 )
 from eval.scoring import Counts, score_case
@@ -411,3 +413,53 @@ def test_summary_table_has_a_separate_rule_row() -> None:
 
     assert "| security | 1 | 0 | 0 | 0 | 1 | — | 0% | — |" in table
     assert "| secret scan (rule) | — | 2 | 1 | 1 | — | 50% | — | — |" in table
+
+
+def test_repeated_summary_shows_mean_and_spread() -> None:
+    info = RunInfo(model="m", settings="s", date="d")
+    runs = [
+        [_result("a", False, Counts(tp=1, fn=1)), _result("b", True, Counts(fp=1))],
+        [_result("a", False, Counts(tp=2)), _result("b", True, Counts())],
+    ]
+
+    table = repeated_summary(runs, info)
+
+    assert "2 cases, 1 of them clean · 2 runs, mean (min-max) · d" in table
+    # Precision 50% then 100%; recall 50% then 100%; F1 50% then 100%.
+    assert "| security | 2 | 2 | 1.5 (1-2) | 0.5 (0-1) | 0.5 (0-1) | 75% (50%-100%) |" in (table)
+    assert "False positives on the 1 clean cases per run: 0.5 (0-1) from the LLM agents" in table
+
+
+def test_repeated_report_lists_each_run_per_case() -> None:
+    info = RunInfo(model="m", settings="s", date="d")
+    runs = [[_result("a", False, Counts(tp=1))], [_result("a", False, Counts(fn=1))]]
+
+    report = full_repeated_report(runs, info)
+
+    assert "`uv run python -m eval.run --repeat 2`" in report
+    assert "| a | 1 | 1/0/0 · 0/0/1 | 0/0 · 0/0 |  |" in report
+
+
+async def test_main_repeats_and_reports_the_spread(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    llm = RoutingLLM(dict.fromkeys(("security", "performance", "tests"), oracle))
+
+    @asynccontextmanager
+    async def fake_provider(settings: Any) -> AsyncIterator[LLMProvider]:
+        yield llm
+
+    monkeypatch.setattr(run_module, "open_llm_provider", fake_provider)
+    output = tmp_path / "results.md"
+
+    code = await run_module.main(
+        ["--case", CASES[0].name, "--repeat", "2", "--output", str(output)]
+    )
+
+    assert code == 0
+    assert "2 runs, mean (min-max)" in output.read_text(encoding="utf-8")
+    assert len(llm.calls) == 2 * 3  # one case, three agents, twice
+
+
+async def test_repeat_must_be_positive() -> None:
+    assert await run_module.main(["--repeat", "0"]) == 2

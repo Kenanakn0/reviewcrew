@@ -3,6 +3,8 @@
     uv run python -m eval.run                      # all cases, writes eval/results.md
     uv run python -m eval.run --case sql_injection_fstring --case clean_docs_typo
     uv run python -m eval.run --update-readme      # also refresh the README table
+    uv run python -m eval.run --repeat 3           # mean (min-max) over three runs
+    uv run python -m eval.run --cases eval/cases_holdout --output eval/results_holdout.md
 
 Uses the same LLM and review settings as the bot (LLM_*, ANTHROPIC_API_KEY, REVIEW_* from
 the environment or `.env`), but no GitHub App. Calls the real LLM, so it costs money.
@@ -19,7 +21,15 @@ from pathlib import Path
 
 from eval.cases import CASES_DIR, EvalCase, load_cases
 from eval.pricing import cost_usd
-from eval.report import CaseResult, RunInfo, embed_in_readme, full_report, summary_table
+from eval.report import (
+    CaseResult,
+    RunInfo,
+    embed_in_readme,
+    full_repeated_report,
+    full_report,
+    repeated_summary,
+    summary_table,
+)
 from eval.scoring import Counts, score_case
 from reviewcrew.agents.registry import AGENT_CLASSES
 from reviewcrew.config import CoreSettings
@@ -123,6 +133,9 @@ def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT, help="Markdown report")
     parser.add_argument("--parallel-cases", type=int, default=2)
     parser.add_argument(
+        "--repeat", type=int, default=1, help="run the cases N times; report mean (min-max)"
+    )
+    parser.add_argument(
         "--update-readme", action="store_true", help="refresh the results table in README.md"
     )
     return parser.parse_args(argv)
@@ -138,6 +151,9 @@ async def main(argv: Sequence[str] | None = None) -> int:
     if not cases:
         print("No cases selected.", file=sys.stderr)
         return 2
+    if args.repeat < 1:
+        print("--repeat must be at least 1.", file=sys.stderr)
+        return 2
     options = settings.review_options().model_copy(update={"token_budget": None})
     info = RunInfo(
         model=settings.llm_model,
@@ -145,13 +161,26 @@ async def main(argv: Sequence[str] | None = None) -> int:
         date=datetime.now(UTC).strftime("%Y-%m-%d"),
     )
 
+    runs: list[list[CaseResult]] = []
     async with open_llm_provider(settings) as llm:
-        results = await evaluate(
-            cases, llm, options, model=settings.llm_model, parallel_cases=args.parallel_cases
-        )
+        for run in range(1, args.repeat + 1):
+            if args.repeat > 1:
+                logger.info("run %d of %d", run, args.repeat)
+            runs.append(
+                await evaluate(
+                    cases,
+                    llm,
+                    options,
+                    model=settings.llm_model,
+                    parallel_cases=args.parallel_cases,
+                )
+            )
 
-    args.output.write_text(full_report(results, info), encoding="utf-8", newline="\n")
-    table = summary_table(results, info)
+    if len(runs) == 1:
+        report, table = full_report(runs[0], info), summary_table(runs[0], info)
+    else:
+        report, table = full_repeated_report(runs, info), repeated_summary(runs, info)
+    args.output.write_text(report, encoding="utf-8", newline="\n")
     print(table)
     print(f"\nFull report: {args.output}")
     if args.update_readme:
