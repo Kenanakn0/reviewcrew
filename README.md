@@ -14,6 +14,11 @@ review: inline comments on the affected lines plus a summary.
   deserialization, ...), performance (N+1 queries, unbounded work, blocking I/O, ...) and
   tests (untested logic, missing edge cases, tests that cannot fail). Each has its own prompt
   and returns typed, schema-validated findings.
+- **Deterministic where it can be.** A rule-based secret scan reports hardcoded credentials
+  on their exact line, independent of the model. Every LLM finding states its category, and
+  the performance and test reviewers' findings outside their area are dropped in code
+  rather than by asking nicely in the prompt. The test reviewer is told which changed
+  functions no test file in the PR mentions.
 - **One clean review.** Duplicates across agents are merged, low-confidence findings are
   hidden, and every comment is anchored to a line GitHub accepts. Findings outside the
   changed lines go to the summary instead of being dropped.
@@ -42,7 +47,9 @@ flowchart LR
         O --> S[Security agent]
         O --> P[Performance agent]
         O --> T[Tests agent]
-        S & P & T --> A["Aggregator<br/>de-duplicate, threshold, rank"]
+        D --> R["Secret scan<br/>(rule)"]
+        S & P & T -- "own category only" --> A["Aggregator<br/>de-duplicate, threshold, rank"]
+        R --> A
         A --> V["Verifier<br/>anchor to diff lines"]
         V --> PUB["Publisher<br/>inline comments + summary,<br/>secret masking"]
     end
@@ -54,7 +61,8 @@ flowchart LR
 |---|---|
 | `src/reviewcrew/webhook/` | Signature verification (`X-Hub-Signature-256`, constant-time) and event filtering |
 | `src/reviewcrew/github/` | App JWT, cached installation tokens, REST client |
-| `src/reviewcrew/diff/` | `unidiff` parsing, filters, context expansion, chunking, line map |
+| `src/reviewcrew/diff/` | `unidiff` parsing, filters, context expansion, chunking, line map, changed-function detection |
+| `src/reviewcrew/rules/` | Deterministic checks (secret scan) reported next to the agents |
 | `src/reviewcrew/llm/` | Provider-agnostic structured completions (Anthropic, OpenAI-compatible), retries |
 | `src/reviewcrew/agents/` | The three agents and their prompts |
 | `src/reviewcrew/pipeline/` | Orchestrator, token budget, aggregator, verifier, publisher |
@@ -136,7 +144,8 @@ uv run python -m eval.run --update-readme  # also refreshes the table below
 A finding counts as correct when it has the expected category and file and lies within
 two lines of the expected location. The runner uses the same LLM and review settings as
 the bot and calls the real model (free with a local model, paid with a hosted API). The
-report states the model and provider that produced the numbers.
+report states the model and provider that produced the numbers. The agent rows measure the
+LLM alone; the secret scan is scored on its own row, so a rule hit never hides a model miss.
 
 <!-- eval-results:start -->
 *Not run against a real model yet.* Run the command above with an API key configured to
@@ -171,6 +180,10 @@ fill in this table.
   repository, so issues that depend on distant code (callers, configuration) can be missed.
 - **Duplicate detection is lexical.** The same issue described in completely different
   words by two agents may appear twice.
+- **Heuristic helpers.** The secret scan matches known token formats and credential-like
+  names, so it can miss unusual secrets or flag test fixtures. The untested-function hint is
+  regex based (Python, JS/TS, Go, class declarations) and only knows about tests in the same
+  pull request.
 - **Very large pull requests** are limited by the token budget, and GitHub may refuse to
   return a diff for extremely large ones.
 - **GitHub only**, and one review per commit: re-reviewing the same commit needs a new push.
