@@ -1,0 +1,6 @@
+title: Parse human-friendly durations in job schedules
+expected:
+  - category: tests
+    path: timeparse/duration.go
+    line_contains: 'func ParseDuration'
+    note: new parser with several units and error paths, no duration_test.go

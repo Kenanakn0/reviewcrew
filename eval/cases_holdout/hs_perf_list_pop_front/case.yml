@@ -1,0 +1,7 @@
+title: Crawl the docs site map breadth-first
+expected:
+  - category: performance
+    path: app/crawler.py
+    line_contains: 'queue.pop(0)'
+    note: list.pop(0) shifts the whole list each time, quadratic over the crawl; use a deque
+scored: [security, performance]

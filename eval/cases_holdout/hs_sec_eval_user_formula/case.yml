@@ -1,0 +1,7 @@
+title: Support formulas in budget cells
+expected:
+  - category: security
+    path: web/sheet.js
+    line_contains: 'return eval(expression)'
+    note: formulas written by other users are executed with eval in every viewer's browser
+scored: [security, performance]

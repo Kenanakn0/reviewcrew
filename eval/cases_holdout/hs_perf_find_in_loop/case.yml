@@ -1,0 +1,7 @@
+title: Show customer names on invoices
+expected:
+  - category: performance
+    path: web/invoices.js
+    line_contains: 'customers.find('
+    note: linear search per order (orders x customers); build a Map by id once
+scored: [security, performance]

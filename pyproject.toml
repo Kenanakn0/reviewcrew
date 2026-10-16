@@ -44,7 +44,7 @@ line-length = 100
 target-version = "py312"
 src = ["src", "."]
 # Evaluation cases are deliberately flawed sample code, not part of the project.
-extend-exclude = ["eval/cases"]
+extend-exclude = ["eval/cases", "eval/cases_holdout"]
 
 [tool.ruff.lint]
 select = [
@@ -71,7 +71,7 @@ select = [
 python_version = "3.12"
 strict = true
 files = ["src", "tests", "eval"]
-exclude = ["^eval/cases/"]
+exclude = ["^eval/cases(_holdout)?/"]
 plugins = ["pydantic.mypy"]
 
 [tool.pydantic-mypy]

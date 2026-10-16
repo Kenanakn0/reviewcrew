@@ -33,6 +33,9 @@ from pydantic import BaseModel, ConfigDict, Field
 from reviewcrew.agents.models import AgentName
 
 CASES_DIR = Path(__file__).parent / "cases"
+# Written after the prompts were tuned on CASES_DIR and never used for tuning: a check that
+# the numbers carry over to code the prompts were not adjusted to.
+HOLDOUT_DIR = Path(__file__).parent / "cases_holdout"
 
 
 class ExpectedSpec(BaseModel):

@@ -1,0 +1,7 @@
+title: Retry notifications and skip unverified emails
+expected:
+  - category: tests
+    path: app/notifier.py
+    line_contains: 'def notify'
+    span: 10
+    note: the retry and unverified-email branches are untested; the only test asserts on a mock

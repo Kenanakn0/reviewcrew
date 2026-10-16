@@ -1,0 +1,7 @@
+title: Return to the previous page after login
+expected:
+  - category: security
+    path: app/auth_views.py
+    line_contains: 'request.args.get("next")'
+    note: open redirect, the next parameter is not checked against the own host
+scored: [security, performance]

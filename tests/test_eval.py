@@ -1,5 +1,6 @@
 """The evaluation harness itself: cases, diff building, scoring, report and runner."""
 
+from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -8,7 +9,15 @@ from typing import Any
 import pytest
 
 from eval import run as run_module
-from eval.cases import CaseError, EvalCase, ExpectedFinding, build_diff, load_case, load_cases
+from eval.cases import (
+    HOLDOUT_DIR,
+    CaseError,
+    EvalCase,
+    ExpectedFinding,
+    build_diff,
+    load_case,
+    load_cases,
+)
 from eval.report import (
     README_END,
     README_START,
@@ -28,6 +37,7 @@ from reviewcrew.pipeline.options import ReviewOptions
 from tests.fakes import RoutingLLM
 
 CASES = load_cases()
+HOLDOUT = load_cases(HOLDOUT_DIR)
 BY_TITLE = {case.title: case for case in CASES}
 
 # --- the case set ----------------------------------------------------------------------------
@@ -44,7 +54,17 @@ def test_there_are_enough_cases_including_clean_ones() -> None:
     assert len({case.title for case in CASES}) == len(CASES)  # titles identify cases below
 
 
-@pytest.mark.parametrize("case", CASES, ids=lambda case: case.name)
+def test_the_holdout_set_covers_every_agent_and_clean_code() -> None:
+    per_category = Counter(e.category for case in HOLDOUT for e in case.expected)
+
+    assert 6 <= len(HOLDOUT) <= 8
+    assert all(per_category[agent] >= 2 for agent in ("security", "performance", "tests"))
+    assert sum(case.is_clean for case in HOLDOUT) >= 2
+    assert not {c.name for c in HOLDOUT} & {c.name for c in CASES}
+    assert not {c.title for c in HOLDOUT} & set(BY_TITLE)
+
+
+@pytest.mark.parametrize("case", CASES + HOLDOUT, ids=lambda case: case.name)
 def test_every_expected_finding_is_on_a_reviewable_diff_line(case: EvalCase) -> None:
     diff = process_diff(case.diff, new_contents=case.head_contents)
 
