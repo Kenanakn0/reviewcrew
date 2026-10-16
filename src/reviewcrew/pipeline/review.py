@@ -11,6 +11,7 @@ import httpx
 from reviewcrew.agents.base import BaseAgent
 from reviewcrew.agents.models import AgentName
 from reviewcrew.agents.registry import AGENT_CLASSES
+from reviewcrew.diff.definitions import untested_definitions
 from reviewcrew.diff.models import FileDiff
 from reviewcrew.diff.processor import process_diff
 from reviewcrew.github.client import GitHubClient
@@ -23,6 +24,7 @@ from reviewcrew.pipeline.publisher import ReviewReport, build_review
 from reviewcrew.pipeline.verifier import verify
 from reviewcrew.redaction import secrets_in_diff
 from reviewcrew.repo_config.loader import load_repo_config
+from reviewcrew.rules.secrets import scan_secrets
 from reviewcrew.webhook.events import PullRequestEvent
 
 logger = logging.getLogger(__name__)
@@ -81,18 +83,28 @@ async def review_pull_request(
         contents = await _fetch_head_contents(github, event, list(diff.files.values()))
         diff = process_diff(diff_text, options.diff, new_contents=contents)
 
+    files = list(diff.files.values())
     results = await run_agents(
         agents,
         diff.chunks,
         pr_title=event.pull_request.title,
         deleted_files=diff.deleted_paths,
+        untested=untested_definitions(files),
         agent_timeout_seconds=options.agent_timeout_seconds,
         max_concurrent_calls=options.max_concurrent_llm_calls,
         budget=TokenBudget(options.token_budget),
     )
-    aggregation = aggregate((f for r in results for f in r.findings), options.aggregation)
+    # The secret scan belongs to the security review: off when the repository disables it.
+    rule_findings = scan_secrets(files) if "security" in options.agents else None
+    if rule_findings:
+        logger.info("Secret scan: %s", "; ".join(f.log_label() for f in rule_findings))
+    aggregation = aggregate(
+        [*(f for r in results for f in r.findings), *(rule_findings or ())],
+        options.aggregation,
+    )
     report = ReviewReport(
         results=tuple(results),
+        rule_findings=rule_findings,
         diff=diff,
         verified=verify(aggregation.findings, diff),
         below_confidence=aggregation.below_confidence,

@@ -28,6 +28,8 @@ number. A header ending in "continued" means the file was split across several m
 ## What to report
 
 - Report only problems in your area of expertise: {focus}.
+- `category` is the area the problem really belongs to: `security`, `performance` or `tests`.
+  Set it honestly, even when it is not your area; findings outside your area are discarded.
 - Focus on lines this pull request adds or changes (`+`). Use context lines only to understand
   them. Do not report pre-existing problems in unchanged code.
 - `path` must be copied exactly from a FILE header. `line` must be a new-file number from the left

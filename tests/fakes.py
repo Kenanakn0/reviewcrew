@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel
 
+from reviewcrew.agents.models import AgentName
 from reviewcrew.llm.base import SchemaT, StructuredResponse, TokenUsage
 
 Step = BaseModel | Exception | Callable[[str, str], BaseModel]
@@ -37,7 +38,7 @@ class FakeLLM:
         return StructuredResponse(value=value, usage=self.usage, model="fake-model")
 
 
-ROLE_MARKERS = {
+ROLE_MARKERS: dict[AgentName, str] = {
     "security": "security engineer",
     "performance": "performance engineer",
     "tests": "specialises in testing",
@@ -59,7 +60,7 @@ class RoutingLLM:
     def name(self) -> str:
         return "routing-fake"
 
-    def agent_of(self, system: str) -> str:
+    def agent_of(self, system: str) -> AgentName:
         return next(agent for agent, marker in ROLE_MARKERS.items() if marker in system)
 
     async def complete_structured(

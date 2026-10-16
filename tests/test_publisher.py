@@ -45,7 +45,7 @@ def report(
     results = tuple(
         AgentResult(
             agent=agent,
-            findings=tuple(f for f in findings if f.agent == agent),
+            findings=tuple(f for f in findings if f.agent == agent and f.source == "llm"),
             usage=TokenUsage(input_tokens=1000, output_tokens=200),
             duration_seconds=2.5,
             errors=extra.pop(f"{agent}_errors", ()),
@@ -173,3 +173,34 @@ def test_comment_format() -> None:
     assert body.startswith("**🧪 Tests · Medium** · confidence 0.88")
     assert "**SQL injection**" in body
     assert "**Suggested fix**" in body
+
+
+def test_rule_findings_have_their_own_row_and_label(diff: ProcessedDiff) -> None:
+    secret = finding("app/settings.py", 9, source="rule", title="Hardcoded secret")
+
+    payload = review(diff, finding(), secret, rule_findings=(secret,))
+
+    body = payload["body"]
+    assert "| 🔒 Security | 1 | high |" in body  # the LLM agent's own finding only
+    assert "| 🔑 Secret scan (rule) | 1 | high | — | — | ✅ |" in body
+    comments = {c["line"]: c["body"] for c in payload["comments"]}
+    assert comments[9].startswith("**🔑 Secret scan (rule) · High**")
+    assert comments[11].startswith("**🔒 Security · High**")
+
+
+def test_no_rule_row_when_the_scan_did_not_run(diff: ProcessedDiff) -> None:
+    assert "Secret scan" not in review(diff, finding())["body"]
+
+
+def test_raw_counts_and_off_category_drops_are_shown(diff: ProcessedDiff) -> None:
+    shown = finding()
+    base = report(diff, shown)
+    security = base.results[0].model_copy(
+        update={"findings": (shown, finding(line=12, title="merged away")), "off_category": 2}
+    )
+    body = build_review(
+        base.model_copy(update={"results": (security, *base.results[1:])}), secrets=set()
+    ).body
+
+    assert "| 🔒 Security | 1 (2 raw) | high |" in body
+    assert "2 findings outside the reporting agent's area dropped" in body

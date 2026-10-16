@@ -23,6 +23,7 @@ from eval.report import CaseResult, RunInfo, embed_in_readme, full_report, summa
 from eval.scoring import Counts, score_case
 from reviewcrew.agents.registry import AGENT_CLASSES
 from reviewcrew.config import CoreSettings
+from reviewcrew.diff.definitions import untested_definitions
 from reviewcrew.diff.processor import process_diff
 from reviewcrew.llm.base import LLMProvider, TokenUsage
 from reviewcrew.llm.factory import open_llm_provider
@@ -30,6 +31,7 @@ from reviewcrew.logging_config import configure_logging
 from reviewcrew.pipeline.aggregator import aggregate
 from reviewcrew.pipeline.options import ReviewOptions
 from reviewcrew.pipeline.orchestrator import run_agents
+from reviewcrew.rules.secrets import scan_secrets
 
 logger = logging.getLogger("eval")
 
@@ -42,6 +44,7 @@ async def evaluate_case(
     case: EvalCase, llm: LLMProvider, options: ReviewOptions, *, model: str
 ) -> CaseResult:
     diff = process_diff(case.diff, options.diff, new_contents=case.head_contents)
+    files = list(diff.files.values())
     agents = [AGENT_CLASSES[name](llm, language="en") for name in options.agents]
     started = time.monotonic()
     results = await run_agents(
@@ -49,16 +52,21 @@ async def evaluate_case(
         diff.chunks,
         pr_title=case.title,
         deleted_files=diff.deleted_paths,
+        untested=untested_definitions(files),
         agent_timeout_seconds=options.agent_timeout_seconds,
         max_concurrent_calls=options.max_concurrent_llm_calls,
     )
     duration = time.monotonic() - started
+    # LLM and rule findings are scored separately, so the agents' numbers measure the
+    # models alone and a rule hit never hides an LLM miss.
     findings = aggregate((f for r in results for f in r.findings), options.aggregation).findings
+    rules = scan_secrets(files) if "security" in options.agents else ()
     usage = sum((r.usage for r in results), TokenUsage())
     return CaseResult(
         name=case.name,
         clean=case.is_clean,
         counts=score_case(findings, case.expected, case.scored),
+        rule_counts=score_case(rules, case.expected, ["security"])["security"],
         usage=usage,
         cost_usd=cost_usd(model, usage),
         duration_seconds=duration,

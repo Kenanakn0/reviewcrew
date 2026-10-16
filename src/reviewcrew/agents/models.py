@@ -13,19 +13,38 @@ from pydantic import (
 from pydantic.json_schema import SkipJsonSchema
 
 from reviewcrew.llm.base import TokenUsage
+from reviewcrew.redaction import find_secrets, redact
 
 AgentName = Literal["security", "performance", "tests"]
 Severity = Literal["critical", "high", "medium", "low"]
+# "llm": reported by an agent's model; "rule": found deterministically (e.g. the secret scan).
+FindingSource = Literal["llm", "rule"]
 
 SEVERITY_ORDER: dict[Severity, int] = {"critical": 0, "high": 1, "medium": 2, "low": 3}
+
+# Spellings small models use for the categories.
+_CATEGORY_ALIASES: dict[str, AgentName] = {
+    "test": "tests",
+    "testing": "tests",
+    "test coverage": "tests",
+    "test_coverage": "tests",
+    "coverage": "tests",
+    "perf": "performance",
+    "sec": "security",
+}
 
 
 class FindingDraft(BaseModel):
     """What the LLM is asked to return for each issue (validated, then normalised).
 
-    Lenient where small models commonly slip: severity casing and omitted optional fields.
+    Lenient where small models commonly slip: casing, category spellings and omitted optional
+    fields.
     """
 
+    category: AgentName = Field(
+        description="Area of the problem: security, performance or tests. Use the problem's "
+        "true area, even when it is not your own."
+    )
     path: str = Field(description="File path exactly as shown in the FILE header.")
     line: int = Field(description="New-file line number from the left column of the diff.")
     end_line: int | None = Field(
@@ -43,6 +62,14 @@ class FindingDraft(BaseModel):
     @classmethod
     def _lowercase_severity(cls, value: object) -> object:
         return value.strip().lower() if isinstance(value, str) else value
+
+    @field_validator("category", mode="before")
+    @classmethod
+    def _normalise_category(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+        value = value.strip().lower()
+        return _CATEGORY_ALIASES.get(value, value)
 
 
 class AgentReport(BaseModel):
@@ -73,6 +100,7 @@ class Finding(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     agent: AgentName
+    source: FindingSource = "llm"
     path: str
     line: int  # new-file line number (RIGHT side)
     end_line: int | None = None
@@ -81,6 +109,14 @@ class Finding(BaseModel):
     title: str
     explanation: str
     suggestion: str | None = None
+
+    def log_label(self) -> str:
+        """Compact description for logs: location and masked title, never the explanation."""
+        title = redact(self.title, find_secrets(self.title))[:80]
+        return (
+            f"{self.agent}/{self.source} {self.path}:{self.line} {self.severity} "
+            f"{self.confidence:.2f} {title!r}"
+        )
 
 
 class AgentResult(BaseModel):
@@ -92,6 +128,7 @@ class AgentResult(BaseModel):
     errors: tuple[str, ...] = ()  # chunks that produced no usable output, with the reason
     duration_seconds: float = 0.0  # wall-clock time of the whole agent, set by the orchestrator
     skipped_chunks: int = 0  # not reviewed because the PR's token budget ran out
+    off_category: int = 0  # findings dropped for belonging to another agent's area
 
     def __add__(self, other: "AgentResult") -> "AgentResult":
         return AgentResult(
@@ -101,4 +138,5 @@ class AgentResult(BaseModel):
             errors=self.errors + other.errors,
             duration_seconds=max(self.duration_seconds, other.duration_seconds),
             skipped_chunks=self.skipped_chunks + other.skipped_chunks,
+            off_category=self.off_category + other.off_category,
         )

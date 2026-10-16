@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from reviewcrew.agents.base import BaseAgent
 from reviewcrew.agents.models import AgentResult
 from reviewcrew.diff.chunker import DiffChunk
+from reviewcrew.diff.definitions import Definition
 from reviewcrew.diff.tokens import estimate_tokens
 from reviewcrew.llm.base import TokenUsage
 from reviewcrew.pipeline.budget import OUTPUT_ALLOWANCE_TOKENS, TokenBudget
@@ -24,6 +25,7 @@ async def run_agents(
     max_concurrent_calls: int,
     budget: TokenBudget | None = None,
     deleted_files: Sequence[str] = (),
+    untested: Sequence[Definition] = (),
 ) -> list[AgentResult]:
     """Return one result per agent, in the order of `agents`.
 
@@ -56,6 +58,7 @@ async def run_agents(
                     pr_title=pr_title,
                     chunk_count=len(chunks),
                     deleted_files=deleted_files,
+                    untested=untested,
                 )
                 usage = result.usage
                 return result

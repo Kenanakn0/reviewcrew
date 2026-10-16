@@ -48,6 +48,11 @@ def find_secrets(text: str) -> set[str]:
     return found
 
 
+def is_known_token(value: str) -> bool:
+    """True when `value` has the format of a well-known credential (AWS, GitHub, Stripe…)."""
+    return any(pattern.fullmatch(value) for pattern in _TOKEN_PATTERNS)
+
+
 def secrets_in_diff(files: Iterable[FileDiff]) -> set[str]:
     """Candidate secrets on the lines a PR adds (removed lines are already public history)."""
     added = "\n".join(

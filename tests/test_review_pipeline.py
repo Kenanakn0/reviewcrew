@@ -44,6 +44,7 @@ SECURITY_ONLY = ReviewOptions(agents=("security",))
 
 def _draft(path: str, line: int, **fields: Any) -> FindingDraft:
     defaults: dict[str, Any] = {
+        "category": "security",
         "end_line": None,
         "severity": "high",
         "confidence": 0.9,
@@ -93,14 +94,31 @@ def performance_model(system: str, user: str) -> AgentReport:
             _draft(
                 "app/users.py",
                 12,
+                category="performance",
                 severity="medium",
                 confidence=0.8,
                 title="Unbounded fetchall loads every matching row",
             ),
-            # Same issue as the security agent's: must be merged.
-            _draft("app/users.py", 11, severity="medium", confidence=0.6, title="SQL injection"),
+            # Same issue as the security agent's, mislabelled by the model: must be merged.
+            _draft(
+                "app/users.py",
+                11,
+                category="performance",
+                severity="medium",
+                confidence=0.6,
+                title="SQL injection",
+            ),
             # Below the default confidence threshold: must be hidden.
-            _draft("app/settings.py", 10, severity="low", confidence=0.2, title="Long timeout"),
+            _draft(
+                "app/settings.py",
+                10,
+                category="performance",
+                severity="low",
+                confidence=0.2,
+                title="Long timeout",
+            ),
+            # Honestly labelled as another agent's area: must be dropped before aggregation.
+            _draft("app/settings.py", 9, category="security", title="Hardcoded API key"),
         ]
     )
 
@@ -214,7 +232,10 @@ async def test_review_is_still_posted_when_the_llm_fails(
     await review_pull_request(event, github=github, llm=llm, options=SECURITY_ONLY)
 
     review = payload_of(reviews)
-    assert review["comments"] == []
+    # The deterministic secret scan does not depend on the LLM.
+    assert [(c["path"], c["line"]) for c in review["comments"]] == [("app/settings.py", 9)]
+    assert "Secret scan (rule)" in review["comments"][0]["body"]
+    assert KEY not in json.dumps(review)
     assert "the LLM provider rejected the request" in review["body"]
     assert "invalid x-api-key" not in review["body"]  # provider details stay in the logs
 
@@ -244,10 +265,15 @@ async def test_three_agents_review_even_when_one_crashes(
     }
     body = review["body"]
     assert "| 🔒 Security | 2 | critical |" in body
-    assert "| ⚡ Performance | 1 | medium |" in body
+    assert "| ⚡ Performance | 1 (3 raw) | medium |" in body
     assert "| 🧪 Tests | 0 | — |" in body
+    # The scan found the key too; the security agent's finding on that line absorbed it.
+    assert "| 🔑 Secret scan (rule) | 0 (1 raw) | — | — | — | ✅ |" in body
     assert "tests: chunk 0: crashed (RuntimeError)" in body
-    assert "1 low-confidence finding hidden · 1 duplicate merged" in body
+    assert (
+        "1 low-confidence finding hidden · "
+        "1 finding outside the reporting agent's area dropped · 2 duplicates merged"
+    ) in body
     assert KEY not in json.dumps(review)
 
 

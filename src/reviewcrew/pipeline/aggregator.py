@@ -1,5 +1,6 @@
 """Merge the agents' findings: drop low-confidence ones, collapse duplicates, rank the rest."""
 
+import logging
 import re
 from collections.abc import Iterable
 from difflib import SequenceMatcher
@@ -7,6 +8,8 @@ from difflib import SequenceMatcher
 from pydantic import BaseModel, ConfigDict, Field
 
 from reviewcrew.agents.models import SEVERITY_ORDER, Finding, Severity
+
+logger = logging.getLogger(__name__)
 
 _STOPWORDS = frozenset(
     [
@@ -47,6 +50,10 @@ class AggregationConfig(BaseModel):
     line_proximity: int = Field(default=3, ge=0)
     # Title similarity (0-1) above which two nearby findings are considered the same issue.
     title_similarity: float = Field(default=0.6, ge=0.0, le=1.0)
+    # Looser threshold between a rule finding and an LLM finding of the same agent: the rule
+    # pins a known issue to its line, so "Hardcoded database password" next to the secret
+    # scan's "Hardcoded secret" is the same problem, not a second one.
+    cross_source_similarity: float = Field(default=0.3, ge=0.0, le=1.0)
 
 
 class AggregationResult(BaseModel):
@@ -99,11 +106,14 @@ def _near(a: Finding, b: Finding, proximity: int) -> bool:
 
 
 def is_duplicate(a: Finding, b: Finding, config: AggregationConfig) -> bool:
-    return (
-        a.path == b.path
-        and _near(a, b, config.line_proximity)
-        and title_similarity(a.title, b.title) >= config.title_similarity
+    if a.path != b.path or not _near(a, b, config.line_proximity):
+        return False
+    threshold = (
+        config.cross_source_similarity
+        if a.source != b.source and a.agent == b.agent
+        else config.title_similarity
     )
+    return title_similarity(a.title, b.title) >= threshold
 
 
 def aggregate(
@@ -125,6 +135,9 @@ def aggregate(
     for candidate in sorted(severe_enough, key=rank_key):
         for index, existing in enumerate(kept):
             if is_duplicate(existing, candidate, config):
+                logger.info(
+                    "Merged duplicate %s into %s", candidate.log_label(), existing.log_label()
+                )
                 if candidate.confidence > existing.confidence:
                     kept[index] = existing.model_copy(update={"confidence": candidate.confidence})
                 merged += 1

@@ -22,6 +22,7 @@ from reviewcrew.llm.openai_compat import OpenAICompatProvider
 REPORT = {
     "findings": [
         {
+            "category": "security",
             "path": "app/users.py",
             "line": 11,
             "end_line": None,

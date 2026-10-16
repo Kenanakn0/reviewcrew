@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 
 from reviewcrew.agents.models import Finding
@@ -135,3 +137,53 @@ def test_empty_input() -> None:
     result = aggregate([])
 
     assert (result.findings, result.below_confidence, result.duplicates_merged) == ((), 0, 0)
+
+
+# --- rule findings (deterministic) next to LLM findings ---------------------------------------
+
+
+def rule(**overrides: object) -> Finding:
+    return finding(source="rule", title="Hardcoded secret", **overrides)
+
+
+@pytest.mark.parametrize(
+    "llm_title",
+    ["Hardcoded database password", "Hardcoded API token", "Hardcoded credentials"],
+)
+def test_llm_finding_on_a_rule_flagged_line_is_the_same_issue(llm_title: str) -> None:
+    # The model may also be off by a line, as qwen2.5-coder:7b was on PR #1.
+    result = aggregate([rule(line=3), finding(line=4, title=llm_title)])
+
+    assert len(result.findings) == 1
+    assert result.duplicates_merged == 1
+
+
+def test_rule_finding_does_not_absorb_a_different_issue_nearby() -> None:
+    result = aggregate([rule(line=7), finding(line=8, title="SQL injection in login query")])
+
+    assert len(result.findings) == 2
+
+
+def test_the_looser_threshold_needs_the_same_agent() -> None:
+    other_agent = finding(agent="tests", line=3, title="Hardcoded test credentials")
+
+    assert len(aggregate([rule(line=3), other_agent]).findings) == 2
+
+
+def test_two_llm_findings_keep_the_strict_threshold() -> None:
+    a = finding(line=3, title="Hardcoded secret")
+    b = finding(line=3, title="Hardcoded database password")
+
+    assert title_similarity(a.title, b.title) < AggregationConfig().title_similarity
+    assert len(aggregate([a, b]).findings) == 2
+
+
+def test_merges_are_logged(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="reviewcrew.pipeline.aggregator")
+
+    aggregate([finding(), finding(agent="tests", line=12, confidence=0.6)])
+
+    assert (
+        "Merged duplicate tests/llm app/users.py:12 high 0.60 'SQL injection' into "
+        "security/llm app/users.py:11 high 0.90 'SQL injection'"
+    ) in caplog.text

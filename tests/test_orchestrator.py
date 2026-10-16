@@ -11,6 +11,7 @@ from reviewcrew.agents.tests import TestAgent
 from reviewcrew.diff.chunker import DiffChunk
 from reviewcrew.llm.base import SchemaT, StructuredResponse, TokenUsage
 from reviewcrew.pipeline.orchestrator import run_agents
+from tests.fakes import RoutingLLM
 
 PATH = "app/users.py"
 CHUNKS = [
@@ -18,12 +19,13 @@ CHUNKS = [
 ]
 
 
-def report_for(user: str) -> AgentReport:
+def report_for(system: str, user: str) -> AgentReport:
     """One finding per chunk, on a line derived from the chunk index."""
     index = int(user.split("chunk-")[1][0])
     return AgentReport(
         findings=[
             FindingDraft(
+                category=RoutingLLM({}).agent_of(system),
                 path=PATH,
                 line=10 + index,
                 end_line=None,
@@ -62,7 +64,7 @@ class ScriptedLLM:
             await asyncio.sleep(self.delay.get(index, 0))
             if self.crash:
                 raise RuntimeError("simulated agent crash")
-            value = report_for(user)
+            value = report_for(system, user)
             assert isinstance(value, schema)
             return StructuredResponse(value=value, usage=TokenUsage(input_tokens=10), model="m")
         finally:

@@ -181,6 +181,7 @@ def oracle(system: str, user: str) -> AgentReport:
     return AgentReport(
         findings=[
             FindingDraft(
+                category=agent,
                 path=e.path,
                 line=e.start,
                 end_line=e.end if e.end > e.start else None,
@@ -198,6 +199,7 @@ def oracle(system: str, user: str) -> AgentReport:
 
 def noisy(system: str, user: str) -> AgentReport:
     """Reports a bogus issue on the first added line of every file it sees."""
+    agent = RoutingLLM({}).agent_of(system)
     findings = []
     path = None
     for line in user.splitlines():
@@ -206,6 +208,7 @@ def noisy(system: str, user: str) -> AgentReport:
         elif path and " + " in line and line.split(" + ")[0].strip().isdigit():
             findings.append(
                 FindingDraft(
+                    category=agent,
                     path=path,
                     line=int(line.split(" + ")[0]),
                     end_line=None,
@@ -287,7 +290,8 @@ async def test_main_writes_the_report_and_updates_the_readme(
     assert f"| {CASES[0].name} |" in report
     updated = readme.read_text(encoding="utf-8")
     assert "old" not in updated
-    assert "| **all** |" in updated
+    assert "| **all LLM agents** |" in updated
+    assert "| secret scan (rule) |" in updated
     assert updated.endswith("rest\n")
 
 
@@ -321,14 +325,14 @@ def test_summary_table() -> None:
     assert "Model `m` (effort high) · 2 cases, 1 of them clean · 2026-10-13" in table
     assert "| security | 2 | 2 | 1 | 1 | 1 | 50% | 50% | 50% |" in table
     assert "| Cost (list price) | $0.0200 |" in table
-    assert "False positives on the 1 clean cases: 1." in table
+    assert "False positives on the 1 clean cases: 1 from the LLM agents, 0 from" in table
 
 
 def test_full_report_lists_every_case() -> None:
     info = RunInfo(model="m", settings="s", date="d")
     report = full_report([_result("case_one", True, Counts(), cost=None)], info)
 
-    assert "| case_one | clean | 0 | 0 | 0 | 1,100 | n/a | 2.0s |  |" in report
+    assert "| case_one | clean | 0 | 0 | 0 | 0/0 | 1,100 | n/a | 2.0s |  |" in report
 
 
 def test_embed_requires_markers() -> None:
@@ -365,3 +369,25 @@ def test_unpriced_models_have_no_invented_cost() -> None:
 
     assert "| Cost (list price) | n/a (local or unpriced model) |" in table
     assert "$" not in table
+
+
+async def test_rule_findings_are_scored_apart_from_the_llm_agents() -> None:
+    case = next(c for c in CASES if c.name == "sec_hardcoded_api_token")
+
+    (result,) = await run_module.evaluate([case], RoutingLLM({}), ReviewOptions(), model="m")
+
+    # A silent model gets no credit for what the secret scan found.
+    assert result.counts["security"] == Counts(fn=1)
+    assert result.rule_counts == Counts(tp=1)
+
+
+def test_summary_table_has_a_separate_rule_row() -> None:
+    info = RunInfo(model="m", settings="s", date="d")
+    result = _result("a", False, Counts(fn=1)).model_copy(
+        update={"rule_counts": Counts(tp=1, fp=1)}
+    )
+
+    table = summary_table([result], info)
+
+    assert "| security | 1 | 0 | 0 | 0 | 1 | — | 0% | — |" in table
+    assert "| secret scan (rule) | — | 2 | 1 | 1 | — | 50% | — | — |" in table

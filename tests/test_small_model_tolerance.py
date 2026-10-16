@@ -18,6 +18,7 @@ from tests.helpers import load_diff
 
 BASE = "http://ollama.test/v1/"
 GOOD = {
+    "category": "security",
     "path": "app/users.py",
     "line": 11,
     "end_line": None,

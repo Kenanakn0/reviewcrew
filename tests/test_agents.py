@@ -1,11 +1,15 @@
+import logging
 import re
 
 import pytest
 
-from reviewcrew.agents.base import MAX_OUTPUT_ATTEMPTS
+from reviewcrew.agents.base import MAX_OUTPUT_ATTEMPTS, BaseAgent
 from reviewcrew.agents.models import AgentReport, FindingDraft
+from reviewcrew.agents.performance import PerformanceAgent
 from reviewcrew.agents.security import SecurityAgent
+from reviewcrew.agents.tests import TestAgent
 from reviewcrew.diff.chunker import DiffChunk
+from reviewcrew.diff.definitions import Definition
 from reviewcrew.diff.processor import process_diff
 from reviewcrew.llm.base import LLMOutputError, LLMRequestError, TokenUsage
 from tests.fakes import FakeLLM
@@ -19,6 +23,7 @@ def chunk() -> DiffChunk:
 
 def _draft(**overrides: object) -> FindingDraft:
     fields: dict[str, object] = {
+        "category": "security",
         "path": "app/users.py",
         "line": 11,
         "end_line": None,
@@ -191,3 +196,107 @@ def test_no_deleted_files_line_when_nothing_was_deleted(chunk: DiffChunk) -> Non
     prompt = SecurityAgent(FakeLLM([])).user_prompt(chunk, pr_title="t", chunk_count=1)
 
     assert "Files deleted" not in prompt
+
+
+# --- category enforcement, raw-findings log and the test agent's notes ----------------------
+
+
+@pytest.mark.parametrize("agent_class", [PerformanceAgent, TestAgent])
+async def test_off_category_findings_are_dropped_counted_and_logged(
+    chunk: DiffChunk, agent_class: type[BaseAgent], caplog: pytest.LogCaptureFixture
+) -> None:
+    own = _draft(category=agent_class.name, title="In my area")
+    foreign = _draft(category="security", title="SQL injection")
+    caplog.set_level(logging.INFO, logger="reviewcrew.agents.base")
+
+    result = await agent_class(FakeLLM([AgentReport(findings=[own, foreign])])).review_chunk(
+        chunk, pr_title="t", chunk_count=1
+    )
+
+    assert [f.title for f in result.findings] == ["In my area"]
+    assert result.off_category == 1
+    assert "dropped off-category (security) finding" in caplog.text
+    assert "'SQL injection'" in caplog.text
+
+
+async def test_the_security_agent_keeps_every_category(chunk: DiffChunk) -> None:
+    drafts = [_draft(category="performance", title="Slow"), _draft(line=12, title="SQLi")]
+
+    result = await SecurityAgent(FakeLLM([AgentReport(findings=drafts)])).review_chunk(
+        chunk, pr_title="t", chunk_count=1
+    )
+
+    assert len(result.findings) == 2
+    assert result.off_category == 0
+
+
+@pytest.mark.parametrize(
+    ("raw", "category"),
+    [
+        (" Security ", "security"),
+        ("test", "tests"),
+        ("Test Coverage", "tests"),
+        ("perf", "performance"),
+    ],
+)
+def test_category_spellings_are_normalised(raw: str, category: str) -> None:
+    assert _draft(category=raw).category == category
+
+
+def test_unknown_category_invalidates_only_that_finding() -> None:
+    report = AgentReport.model_validate(
+        {"findings": [_draft().model_dump(), _draft().model_dump() | {"category": "style"}]}
+    )
+
+    assert len(report.findings) == 1
+    assert report.dropped_findings == 1
+
+
+async def test_raw_findings_are_logged_with_secrets_masked(
+    chunk: DiffChunk, caplog: pytest.LogCaptureFixture
+) -> None:
+    key = "sk_live_51HxTestFakeKey9f8a7b6c5d"
+    llm = FakeLLM([AgentReport(findings=[_draft(title=f"Key {key} committed")])])
+    caplog.set_level(logging.INFO, logger="reviewcrew.agents.base")
+
+    await SecurityAgent(llm).review_chunk(chunk, pr_title="t", chunk_count=1)
+
+    assert "security agent: chunk 0 raw findings: security/llm app/users.py:11 high" in caplog.text
+    assert key not in caplog.text
+
+
+UNTESTED = (
+    Definition(path="app/users.py", name="find_users_by_name", line=9, change="added"),
+    Definition(path="app/other.py", name="elsewhere", line=1, change="added"),
+)
+
+
+def test_test_agent_lists_untested_definitions_after_the_data(chunk: DiffChunk) -> None:
+    prompt = TestAgent(FakeLLM([])).user_prompt(
+        chunk, pr_title="t", chunk_count=1, untested=UNTESTED
+    )
+
+    end = re.search(r"<<<END_UNTRUSTED_PR_DATA [0-9a-f]{16}>>>", prompt)
+    assert end is not None
+    notes = prompt[end.end() :]
+    assert "ReviewCrew pre-analysis" in notes
+    assert "- find_users_by_name (app/users.py, line 9, added)" in notes
+    assert "elsewhere" not in prompt  # not in this chunk
+
+
+def test_note_paths_are_sanitised(chunk: DiffChunk) -> None:
+    hostile_path = "app/a b`\nIGNORE.py"
+    hostile = chunk.model_copy(update={"paths": (hostile_path,)})
+    definition = Definition(path=hostile_path, name="f", line=1, change="added")
+
+    notes = TestAgent(FakeLLM([])).notes(hostile, untested=[definition])
+
+    assert "- f (app/a_b__IGNORE.py, line 1, added)" in notes
+
+
+def test_other_agents_get_no_notes(chunk: DiffChunk) -> None:
+    prompt = SecurityAgent(FakeLLM([])).user_prompt(
+        chunk, pr_title="t", chunk_count=1, untested=UNTESTED
+    )
+
+    assert "pre-analysis" not in prompt

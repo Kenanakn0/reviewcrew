@@ -10,3 +10,4 @@ class PerformanceAgent(BaseAgent):
     name: ClassVar[AgentName] = "performance"
     role: ClassVar[str] = "a senior performance engineer"
     focus: ClassVar[str] = "performance and scalability problems"
+    enforce_category: ClassVar[bool] = True

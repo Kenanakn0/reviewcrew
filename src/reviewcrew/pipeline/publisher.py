@@ -18,6 +18,7 @@ AGENT_LABELS: dict[AgentName, str] = {
     "performance": "⚡ Performance",
     "tests": "🧪 Tests",
 }
+RULE_LABEL = "🔑 Secret scan (rule)"
 SKIP_REASON_LABELS: dict[SkipReason, str] = {
     "removed": "deleted",
     "binary": "binary",
@@ -70,6 +71,7 @@ class ReviewReport(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     results: tuple[AgentResult, ...]
+    rule_findings: tuple[Finding, ...] | None = None  # None: the secret scan did not run
     diff: ProcessedDiff
     verified: VerifiedFindings
     below_confidence: int = 0
@@ -82,9 +84,13 @@ class ReviewReport(BaseModel):
     duration_seconds: float
 
 
+def finding_label(finding: Finding) -> str:
+    return RULE_LABEL if finding.source == "rule" else AGENT_LABELS[finding.agent]
+
+
 def format_comment(finding: Finding) -> str:
     lines = [
-        f"**{AGENT_LABELS[finding.agent]} · {finding.severity.capitalize()}** "
+        f"**{finding_label(finding)} · {finding.severity.capitalize()}** "
         f"· confidence {finding.confidence:.2f}",
         "",
         f"**{finding.title}**",
@@ -112,7 +118,7 @@ def _finding_list(title: str, findings: Sequence[Finding], *, details: bool) -> 
     for finding in sorted(findings, key=rank_key)[:MAX_LISTED]:
         lines.append(
             f"- **{finding.severity.capitalize()}** {_location(finding)} "
-            f"({AGENT_LABELS[finding.agent]}): {finding.title}"
+            f"({finding_label(finding)}): {finding.title}"
         )
         if details:
             lines.append(f"  {finding.explanation}")
@@ -121,13 +127,20 @@ def _finding_list(title: str, findings: Sequence[Finding], *, details: bool) -> 
     return lines
 
 
+def _count(shown: int, raw: int) -> str:
+    """Findings shown, plus what the reviewer reported before filtering and merging."""
+    return str(shown) if shown == raw else f"{shown} ({raw} raw)"
+
+
 def _agent_table(report: ReviewReport, shown: Sequence[Finding]) -> list[str]:
     lines = [
         "| Agent | Findings | Highest severity | Tokens | Time | Status |",
         "|---|---:|---|---:|---:|---|",
     ]
     for result in report.results:
-        mine = sorted((f for f in shown if f.agent == result.agent), key=rank_key)
+        mine = sorted(
+            (f for f in shown if f.agent == result.agent and f.source == "llm"), key=rank_key
+        )
         highest = mine[0].severity if mine else "—"
         problems = []
         if result.errors:
@@ -136,8 +149,16 @@ def _agent_table(report: ReviewReport, shown: Sequence[Finding]) -> list[str]:
             problems.append(f"⏭️ {result.skipped_chunks} skipped")
         status = ", ".join(problems) or "✅"
         lines.append(
-            f"| {AGENT_LABELS[result.agent]} | {len(mine)} | {highest} | "
-            f"{result.usage.total_tokens:,} | {result.duration_seconds:.1f}s | {status} |"
+            f"| {AGENT_LABELS[result.agent]} | {_count(len(mine), len(result.findings))} | "
+            f"{highest} | {result.usage.total_tokens:,} | {result.duration_seconds:.1f}s | "
+            f"{status} |"
+        )
+    if report.rule_findings is not None:
+        rules = sorted((f for f in shown if f.source == "rule"), key=rank_key)
+        highest = rules[0].severity if rules else "—"
+        lines.append(
+            f"| {RULE_LABEL} | {_count(len(rules), len(report.rule_findings))} | {highest} | "
+            "— | — | ✅ |"
         )
     return lines
 
@@ -176,6 +197,11 @@ def build_summary(
             hidden.append(
                 _plural(report.below_severity, "finding")
                 + f" below min_severity ({report.repo_config.config.min_severity}) hidden"
+            )
+        off_category = sum(result.off_category for result in report.results)
+        if off_category:
+            hidden.append(
+                _plural(off_category, "finding") + " outside the reporting agent's area dropped"
             )
         if report.duplicates_merged:
             hidden.append(_plural(report.duplicates_merged, "duplicate") + " merged")

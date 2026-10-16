@@ -9,6 +9,7 @@ from typing import ClassVar
 
 from reviewcrew.agents.models import AgentName, AgentReport, AgentResult, Finding, FindingDraft
 from reviewcrew.diff.chunker import DiffChunk
+from reviewcrew.diff.definitions import Definition
 from reviewcrew.llm.base import (
     LLMError,
     LLMOutputError,
@@ -55,6 +56,9 @@ class BaseAgent:
     name: ClassVar[AgentName]
     role: ClassVar[str]  # e.g. "a senior application security engineer"
     focus: ClassVar[str]  # one-line area of expertise, used in the common prompt
+    # Drop findings whose `category` is another agent's area. Small models tend to repeat
+    # the most obvious problem (often a security one) whatever reviewer they play.
+    enforce_category: ClassVar[bool] = False
 
     def __init__(self, llm: LLMProvider, *, language: str = "en") -> None:
         self._llm = llm
@@ -67,6 +71,10 @@ class BaseAgent:
         )
         return f"{common}\n{load_prompt(self.name)}"
 
+    def notes(self, chunk: DiffChunk, *, untested: Sequence[Definition]) -> str:
+        """Facts ReviewCrew computed from the diff for this agent; empty by default."""
+        return ""
+
     def user_prompt(
         self,
         chunk: DiffChunk,
@@ -74,6 +82,7 @@ class BaseAgent:
         pr_title: str,
         chunk_count: int,
         deleted_files: Sequence[str] = (),
+        untested: Sequence[Definition] = (),
     ) -> str:
         marker = secrets.token_hex(8)
         # Deleted files are filtered out of the diff, but their names matter: removing a
@@ -83,6 +92,7 @@ class BaseAgent:
             if deleted_files
             else ""
         )
+        notes = self.notes(chunk, untested=untested)
         return (
             f"Review part {chunk.index + 1} of {chunk_count} of this pull request.\n"
             f"Data identifier: {marker}\n\n"
@@ -90,7 +100,7 @@ class BaseAgent:
             f"PR title: {pr_title}\n"
             f"{deleted}\n"
             f"{chunk.text}\n"
-            f"<<<END_UNTRUSTED_PR_DATA {marker}>>>"
+            f"<<<END_UNTRUSTED_PR_DATA {marker}>>>" + (f"\n\n{notes}" if notes else "")
         )
 
     async def review_chunk(
@@ -100,11 +110,16 @@ class BaseAgent:
         pr_title: str,
         chunk_count: int,
         deleted_files: Sequence[str] = (),
+        untested: Sequence[Definition] = (),
     ) -> AgentResult:
         """Review one chunk. Never raises: failures become an empty result with an error."""
         system = self.system_prompt
         user = self.user_prompt(
-            chunk, pr_title=pr_title, chunk_count=chunk_count, deleted_files=deleted_files
+            chunk,
+            pr_title=pr_title,
+            chunk_count=chunk_count,
+            deleted_files=deleted_files,
+            untested=untested,
         )
         usage = TokenUsage()
         last_error = ""
@@ -140,12 +155,31 @@ class BaseAgent:
                     response.value.dropped_findings,
                     chunk.index,
                 )
-            findings = tuple(
-                finding
-                for draft in response.value.findings
-                if (finding := self._normalise(draft, chunk)) is not None
+            findings: list[Finding] = []
+            off_category = 0
+            for draft in response.value.findings:
+                finding = self._normalise(draft, chunk)
+                if finding is None:
+                    continue
+                if self.enforce_category and draft.category != self.name:
+                    off_category += 1
+                    logger.info(
+                        "%s agent: dropped off-category (%s) finding %s",
+                        self.name,
+                        draft.category,
+                        finding.log_label(),
+                    )
+                    continue
+                findings.append(finding)
+            logger.info(
+                "%s agent: chunk %d raw findings: %s",
+                self.name,
+                chunk.index,
+                "; ".join(f.log_label() for f in findings) or "none",
             )
-            return AgentResult(agent=self.name, findings=findings, usage=usage)
+            return AgentResult(
+                agent=self.name, findings=tuple(findings), usage=usage, off_category=off_category
+            )
         return AgentResult(agent=self.name, usage=usage, errors=(last_error,))
 
     def _normalise(self, draft: FindingDraft, chunk: DiffChunk) -> Finding | None:

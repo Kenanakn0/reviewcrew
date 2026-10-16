@@ -67,6 +67,8 @@ def test_agent_report_schema_is_strict() -> None:
     finding = schema["$defs"]["FindingDraft"]
     assert finding["additionalProperties"] is False
     assert "end_line" in finding["required"]  # nullable, but must be present
+    assert finding["required"][0] == "category"  # asked first, before the details
+    assert finding["properties"]["category"]["enum"] == ["security", "performance", "tests"]
 
 
 class Flaky:
