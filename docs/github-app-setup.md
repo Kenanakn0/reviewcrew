@@ -70,7 +70,7 @@ directory). Then start the webhook forwarder below.
 worker performs the reviews. Start Redis first (Docker shown; any Redis 6.2+ works):
 
 ```bash
-docker run -d --name reviewcrew-redis -p 6379:6379 redis:8.10-alpine
+docker run -d --name reviewcrew-redis -p 127.0.0.1:6379:6379 redis:8.10-alpine
 ```
 
 Terminal 1, the API:

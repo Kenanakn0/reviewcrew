@@ -187,7 +187,7 @@ uv run ruff check . && uv run ruff format --check . && uv run mypy && uv run pyt
 uv run pytest -m live          # optional: agents against the real LLM (costs money)
 
 # Without Docker: Redis, then the API and the worker in separate terminals
-docker run -d -p 6379:6379 redis:8.10-alpine
+docker run -d -p 127.0.0.1:6379:6379 redis:8.10-alpine
 uv run reviewcrew
 uv run reviewcrew-worker
 ```

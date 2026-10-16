@@ -31,7 +31,8 @@ services:
   app:
     <<: *reviewcrew
     ports:
-      - "${PORT:-8000}:8000"
+      # Loopback only: webhooks arrive through a local forwarder (smee) or a reverse proxy.
+      - "127.0.0.1:${PORT:-8000}:8000"
 
   worker:
     <<: *reviewcrew
@@ -40,6 +41,8 @@ services:
       disable: true  # no HTTP server; arq logs its own health
 
   redis:
+    # No `ports:` on purpose: Redis has no auth here and is reachable only by app and worker
+    # on the Compose network, never from the host or the outside.
     image: redis:8.10-alpine
     command: ["redis-server", "--appendonly", "yes"]
     volumes:
