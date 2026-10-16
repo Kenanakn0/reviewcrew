@@ -115,6 +115,22 @@ def test_distinct_issues_on_the_same_line_are_kept() -> None:
     assert len(aggregate([sqli, select_star]).findings) == 2
 
 
+@pytest.mark.parametrize("secret_line", [3, 7, 8])
+def test_hardcoded_secret_and_injection_nearby_stay_separate(secret_line: int) -> None:
+    # Live PR #1: a hardcoded DB password above a login query built by concatenation.
+    # Different issues must survive as two findings, however close their lines are.
+    secret = finding(line=secret_line, title="Hardcoded database password", severity="critical")
+    injection = finding(line=8, end_line=9, title="SQL injection in login query")
+
+    result = aggregate([secret, injection])
+
+    assert sorted(f.title for f in result.findings) == [
+        "Hardcoded database password",
+        "SQL injection in login query",
+    ]
+    assert result.duplicates_merged == 0
+
+
 def test_empty_input() -> None:
     result = aggregate([])
 
