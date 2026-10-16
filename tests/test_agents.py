@@ -301,6 +301,7 @@ def test_functions_mentioned_by_the_prs_tests_turn_the_focus_to_test_quality(
 
     assert "mentioned by the test files in this pull request (tests/test_users.py)" in notes
     assert "Do not report them as untested" in notes
+    assert "Report a missing case at the function's line listed above" in notes
     assert "No tests for" not in notes
 
 

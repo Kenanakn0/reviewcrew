@@ -58,5 +58,7 @@ class TestAgent(BaseAgent):
                 "Do not report them as untested. Judge those tests instead: can they fail "
                 "(real assertions, not only on mocks)? Do they cover failure paths, invalid "
                 "input and boundaries?",
+                "Report a missing case at the function's line listed above; report a test "
+                "that cannot fail at that test.",
             ]
         return "\n".join([NOTES_HEADER, *lines]) if lines else ""
