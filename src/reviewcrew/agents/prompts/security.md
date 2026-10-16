@@ -19,9 +19,6 @@ Look for vulnerabilities introduced by the change, including:
   returned to clients, overly permissive CORS.
 - Security misconfiguration: debug mode in production settings, permissive file permissions.
 
-Check every added line on its own and report each distinct vulnerability as a separate
-finding: one file often has several, a few lines apart.
-
 Severity: critical = exploitable now with serious impact (e.g. SQL injection on a public
 endpoint, a live credential); high = likely exploitable; medium = a weakness that needs
 preconditions; low = hardening.

@@ -11,7 +11,7 @@ import httpx
 from reviewcrew.agents.base import BaseAgent
 from reviewcrew.agents.models import AgentName
 from reviewcrew.agents.registry import AGENT_CLASSES
-from reviewcrew.diff.definitions import untested_definitions
+from reviewcrew.diff.definitions import coverage_hints
 from reviewcrew.diff.models import FileDiff
 from reviewcrew.diff.processor import process_diff
 from reviewcrew.github.client import GitHubClient
@@ -89,7 +89,7 @@ async def review_pull_request(
         diff.chunks,
         pr_title=event.pull_request.title,
         deleted_files=diff.deleted_paths,
-        untested=untested_definitions(files),
+        coverage=coverage_hints(files),
         agent_timeout_seconds=options.agent_timeout_seconds,
         max_concurrent_calls=options.max_concurrent_llm_calls,
         budget=TokenBudget(options.token_budget),

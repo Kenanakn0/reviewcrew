@@ -9,7 +9,7 @@ from reviewcrew.agents.performance import PerformanceAgent
 from reviewcrew.agents.security import SecurityAgent
 from reviewcrew.agents.tests import TestAgent
 from reviewcrew.diff.chunker import DiffChunk
-from reviewcrew.diff.definitions import Definition
+from reviewcrew.diff.definitions import CoverageHints, Definition
 from reviewcrew.diff.processor import process_diff
 from reviewcrew.llm.base import LLMOutputError, LLMRequestError, TokenUsage
 from tests.fakes import FakeLLM
@@ -265,15 +265,17 @@ async def test_raw_findings_are_logged_with_secrets_masked(
     assert key not in caplog.text
 
 
-UNTESTED = (
-    Definition(path="app/users.py", name="find_users_by_name", line=9, change="added"),
-    Definition(path="app/other.py", name="elsewhere", line=1, change="added"),
+UNTESTED = CoverageHints(
+    untested=(
+        Definition(path="app/users.py", name="find_users_by_name", line=9, change="added"),
+        Definition(path="app/other.py", name="elsewhere", line=1, change="added"),
+    )
 )
 
 
 def test_test_agent_lists_untested_definitions_after_the_data(chunk: DiffChunk) -> None:
     prompt = TestAgent(FakeLLM([])).user_prompt(
-        chunk, pr_title="t", chunk_count=1, untested=UNTESTED
+        chunk, pr_title="t", chunk_count=1, coverage=UNTESTED
     )
 
     end = re.search(r"<<<END_UNTRUSTED_PR_DATA [0-9a-f]{16}>>>", prompt)
@@ -281,7 +283,25 @@ def test_test_agent_lists_untested_definitions_after_the_data(chunk: DiffChunk) 
     notes = prompt[end.end() :]
     assert "ReviewCrew pre-analysis" in notes
     assert "- find_users_by_name (app/users.py, line 9, added)" in notes
+    assert "No tests for <name>" in notes
     assert "elsewhere" not in prompt  # not in this chunk
+
+
+def test_functions_mentioned_by_the_prs_tests_turn_the_focus_to_test_quality(
+    chunk: DiffChunk,
+) -> None:
+    coverage = CoverageHints(
+        test_paths=("tests/test_users.py",),
+        covered=(
+            Definition(path="app/users.py", name="find_users_by_name", line=9, change="added"),
+        ),
+    )
+
+    notes = TestAgent(FakeLLM([])).notes(chunk, coverage=coverage)
+
+    assert "mentioned by the test files in this pull request (tests/test_users.py)" in notes
+    assert "Do not report them as untested" in notes
+    assert "No tests for" not in notes
 
 
 def test_note_paths_are_sanitised(chunk: DiffChunk) -> None:
@@ -289,14 +309,19 @@ def test_note_paths_are_sanitised(chunk: DiffChunk) -> None:
     hostile = chunk.model_copy(update={"paths": (hostile_path,)})
     definition = Definition(path=hostile_path, name="f", line=1, change="added")
 
-    notes = TestAgent(FakeLLM([])).notes(hostile, untested=[definition])
+    notes = TestAgent(FakeLLM([])).notes(hostile, coverage=CoverageHints(untested=(definition,)))
 
     assert "- f (app/a_b__IGNORE.py, line 1, added)" in notes
 
 
+@pytest.mark.parametrize("coverage", [None, CoverageHints()])
+def test_no_notes_without_facts(chunk: DiffChunk, coverage: CoverageHints | None) -> None:
+    assert TestAgent(FakeLLM([])).notes(chunk, coverage=coverage) == ""
+
+
 def test_other_agents_get_no_notes(chunk: DiffChunk) -> None:
     prompt = SecurityAgent(FakeLLM([])).user_prompt(
-        chunk, pr_title="t", chunk_count=1, untested=UNTESTED
+        chunk, pr_title="t", chunk_count=1, coverage=UNTESTED
     )
 
     assert "pre-analysis" not in prompt

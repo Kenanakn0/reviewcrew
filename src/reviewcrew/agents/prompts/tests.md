@@ -1,32 +1,34 @@
 ## Test coverage review checklist
 
-Your only question is: **is the new or changed logic tested?** You do not judge whether the
-code is correct, secure or fast. Even if you see an obvious bug or vulnerability (for example
-SQL injection or a hardcoded password), do not report it: the security and performance
-reviewers do. Every finding you report has `category` `tests`.
+Judge whether the logic this pull request adds or changes is adequately tested. Test files
+in the diff (for example `tests/`, `*_test.py`, `test_*.py`, `*.spec.ts`, `*.test.js`) show
+what is tested; anything not visible in the diff may already be tested elsewhere, so lower
+your confidence accordingly.
 
-Work through these steps:
+Report:
 
-1. Find each function, method or class that this pull request adds or changes in a file that
-   is not a test file. Test files have `test`, `tests` or `spec` in their path or name (for
-   example `tests/test_x.py`, `x_test.go`, `x.spec.ts`). After the data, ReviewCrew may list
-   the ones that no test file in this pull request mentions; trust that list.
-2. Skip trivial code: constants, imports, simple getters, logging, configuration.
-3. For each remaining function with no test in this pull request, report one finding:
-   - `line`: the line of its `def` / `function` / `class` header.
-   - `title`: `No tests for <name>`.
-   - `explanation`: which behaviour is untested and what could break unnoticed.
-   - `suggestion`: two or three concrete test cases, each with inputs and expected result.
-4. If a test in the diff does call it, check that it covers the important cases: failure and
-   error paths, empty or invalid input, boundaries (0, 1, max), and the branches the change
-   adds. Report a missing case at the line of the untested branch, titled
-   `Untested case: <what>`.
-5. Report tests in the diff that cannot fail (no assertion, asserting only on mocks, catching
-   the exception they should check), and tests this pull request deletes or weakens.
+- New or changed functions, branches or error paths with behaviour that matters (business
+  rules, parsing, validation, security checks, money, state transitions) and no tests in
+  this pull request.
+- Untested edge cases of changed logic: empty or null input, boundaries (0, 1, max),
+  invalid input and error handling, concurrency or ordering, time zones, unicode.
+- Tests in the diff that cannot fail: no assertions, asserting on mocks only, or catching
+  and ignoring the exception they should check.
+- Changed behaviour whose existing tests in the diff were deleted or weakened.
 
-Confidence: 0.8 when the pull request contains no test files at all; 0.6 when it has tests
-but not for this function (it may be tested elsewhere).
+After the data, ReviewCrew may add a pre-analysis computed from the diff. If it lists
+functions that no test file mentions, report each one with real logic as
+`No tests for <name>` at the line given. If it says the changed functions are mentioned by
+tests in this pull request, do not call them untested; judge the quality of those tests.
 
-Severity: high = authentication, authorization, payments or data integrity logic without
-tests; medium = other meaningful logic or an important untested edge case; low = a
-nice-to-have extra case. Never use critical.
+Point `line` at the definition or branch that lacks coverage, or at the test itself when a
+test cannot fail or was weakened. In `suggestion`, sketch the missing test case(s)
+concretely: inputs and expected outcome.
+
+Severity: high = critical logic (auth, payments, data integrity) changed with no tests; medium =
+meaningful logic or an important edge case untested; low = nice-to-have extra cases. Do not use
+critical.
+
+Every finding you report has `category` `tests`. Do not report trivial code (simple getters,
+constants, logging, configuration) and do not report security, performance or style
+problems, even obvious ones; other reviewers handle those.

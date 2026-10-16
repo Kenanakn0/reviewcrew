@@ -9,7 +9,7 @@ from typing import ClassVar
 
 from reviewcrew.agents.models import AgentName, AgentReport, AgentResult, Finding, FindingDraft
 from reviewcrew.diff.chunker import DiffChunk
-from reviewcrew.diff.definitions import Definition
+from reviewcrew.diff.definitions import CoverageHints
 from reviewcrew.llm.base import (
     LLMError,
     LLMOutputError,
@@ -71,7 +71,7 @@ class BaseAgent:
         )
         return f"{common}\n{load_prompt(self.name)}"
 
-    def notes(self, chunk: DiffChunk, *, untested: Sequence[Definition]) -> str:
+    def notes(self, chunk: DiffChunk, *, coverage: CoverageHints | None) -> str:
         """Facts ReviewCrew computed from the diff for this agent; empty by default."""
         return ""
 
@@ -82,7 +82,7 @@ class BaseAgent:
         pr_title: str,
         chunk_count: int,
         deleted_files: Sequence[str] = (),
-        untested: Sequence[Definition] = (),
+        coverage: CoverageHints | None = None,
     ) -> str:
         marker = secrets.token_hex(8)
         # Deleted files are filtered out of the diff, but their names matter: removing a
@@ -92,7 +92,7 @@ class BaseAgent:
             if deleted_files
             else ""
         )
-        notes = self.notes(chunk, untested=untested)
+        notes = self.notes(chunk, coverage=coverage)
         return (
             f"Review part {chunk.index + 1} of {chunk_count} of this pull request.\n"
             f"Data identifier: {marker}\n\n"
@@ -110,7 +110,7 @@ class BaseAgent:
         pr_title: str,
         chunk_count: int,
         deleted_files: Sequence[str] = (),
-        untested: Sequence[Definition] = (),
+        coverage: CoverageHints | None = None,
     ) -> AgentResult:
         """Review one chunk. Never raises: failures become an empty result with an error."""
         system = self.system_prompt
@@ -119,7 +119,7 @@ class BaseAgent:
             pr_title=pr_title,
             chunk_count=chunk_count,
             deleted_files=deleted_files,
-            untested=untested,
+            coverage=coverage,
         )
         usage = TokenUsage()
         last_error = ""

@@ -23,7 +23,7 @@ from eval.report import CaseResult, RunInfo, embed_in_readme, full_report, summa
 from eval.scoring import Counts, score_case
 from reviewcrew.agents.registry import AGENT_CLASSES
 from reviewcrew.config import CoreSettings
-from reviewcrew.diff.definitions import untested_definitions
+from reviewcrew.diff.definitions import coverage_hints
 from reviewcrew.diff.processor import process_diff
 from reviewcrew.llm.base import LLMProvider, TokenUsage
 from reviewcrew.llm.factory import open_llm_provider
@@ -52,7 +52,7 @@ async def evaluate_case(
         diff.chunks,
         pr_title=case.title,
         deleted_files=diff.deleted_paths,
-        untested=untested_definitions(files),
+        coverage=coverage_hints(files),
         agent_timeout_seconds=options.agent_timeout_seconds,
         max_concurrent_calls=options.max_concurrent_llm_calls,
     )
