@@ -5,8 +5,60 @@ or updated, three specialist agents (security, performance and tests) review the
 parallel. Their findings are merged, checked against the diff and posted back as a single
 review: inline comments on the affected lines plus a summary.
 
-<!-- Demo: add a screenshot or GIF of a review here, for example
-![A ReviewCrew review on a pull request](docs/images/review.png) -->
+## Demo
+
+Real output, copied verbatim from a live pull request reviewed by a local
+`qwen2.5-coder:7b` (Ollama) — nothing edited. The PR adds a `login` function to
+`app/auth.py` with a hardcoded database password (line 3) and a SQL query built by string
+concatenation (line 8). The comments below do not repeat the password; in the third comment
+of that review (a test suggestion) the model did quote it, and ReviewCrew masked it before
+posting.
+(Review of commit `65cc20a` in a private test repository, posted on 2026-10-17.)
+
+**Summary comment**
+
+> ## 🛡️ ReviewCrew review
+>
+> | Agent | Findings | Highest severity | Tokens | Time | Status |
+> |---|---:|---|---:|---:|---|
+> | 🔒 Security | 2 | high | 1,612 | 24.9s | ✅ |
+> | ⚡ Performance | 0 | — | 1,554 | 35.5s | ✅ |
+> | 🧪 Tests | 1 | high | 1,892 | 58.1s | ✅ |
+> | 🔑 Secret scan (rule) | 0 (1 raw) | — | — | — | ✅ |
+>
+> **3 findings**: 3 inline.
+> <sub>1 finding outside the reporting agent's area dropped · 1 duplicate merged</sub>
+>
+> <sub>Reviewed 1 of 1 files in 1 chunk · 5,058 tokens · 59.7s total · commit 65cc20a · automated suggestions, please verify.</sub>
+
+**Inline comment on `app/auth.py`, line 3**
+
+> **🔒 Security · High** · confidence 1.00
+>
+> **Hardcoded Secret**
+>
+> The database password is hardcoded in the code, which makes it easy for an attacker to discover and use it.
+>
+> **Suggested fix**
+>
+> Remove the hardcoded password and store it securely, such as in an environment variable or a secure vault.
+
+**Inline comment on `app/auth.py`, line 8**
+
+> **🔒 Security · High** · confidence 1.00
+>
+> **SQL Injection Vulnerability**
+>
+> The SQL query is constructed using string concatenation, which allows an attacker to inject malicious SQL code through the `username` or `password` parameters.
+>
+> **Suggested fix**
+>
+> Use parameterized queries to prevent SQL injection. Here is an example of how to fix it:
+>
+> ```python
+> query = "SELECT * FROM users WHERE name = ? AND password = ?"
+> cur.execute(query, (username, password))
+> ```
 
 ## What it does
 
