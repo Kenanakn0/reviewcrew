@@ -18,7 +18,13 @@ _TOKEN_PATTERNS = [
     re.compile(p)
     for p in (
         r"AKIA[0-9A-Z]{16}",  # AWS access key ID
-        r"(?:ghp|gho|ghs|ghu|ghr)_[A-Za-z0-9]{20,}",  # GitHub tokens
+        # GitHub tokens: classic `ghp_`/`ghs_`/... + 36 alphanumerics, and the stateless
+        # installation tokens `ghs_<app id>_<JWT>` (~520 chars, base64url segments joined by
+        # dots). The digit look-ahead keeps snake_case names such as `ghs_token_from_env`
+        # out; a dot only continues the token when more token characters follow, so a
+        # sentence's final period is not swallowed.
+        r"(?:ghp|gho|ghs|ghu|ghr)_(?=[A-Za-z0-9_\-]*[0-9])[A-Za-z0-9_\-]{20,}"
+        r"(?:\.[A-Za-z0-9_\-]+)*",
         r"github_pat_[A-Za-z0-9_]{20,}",
         r"sk-ant-[A-Za-z0-9_\-]{20,}",  # Anthropic
         r"sk-(?:proj-)?[A-Za-z0-9_\-]{20,}",  # OpenAI-style
