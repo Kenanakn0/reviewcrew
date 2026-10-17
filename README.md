@@ -134,23 +134,97 @@ model `claude-opus-5-5`). Both use structured output with the same JSON schema.
 `eval/cases/` holds 26 small pull requests with known answers: 21 contain deliberate
 problems (10 security, 7 performance, 5 missing or ineffective tests; one case has two)
 and 5 are clean, to measure false positives. Each case is a `before/` and `after/` tree
-plus a `case.yml` naming the expected findings by category, file and line.
+plus a `case.yml` naming the expected findings by category, file and line. The prompts were
+tuned on this set. `eval/cases_holdout/` holds 8 more cases (2 per agent, 2 clean, in
+patterns and languages the tuning set does not use) that were written and committed before
+the prompts were frozen and never used for tuning.
 
 ```bash
-uv run python -m eval.run                  # writes eval/results.md
-uv run python -m eval.run --update-readme  # also refreshes the table below
+uv run python -m eval.run                       # one run, writes eval/results.md
+uv run python -m eval.run --repeat 3            # mean (min-max) over three runs
+uv run python -m eval.run --cases eval/cases_holdout --output eval/results_holdout.md
+uv run python -m eval.run --update-readme       # also refreshes the table below
 ```
 
 A finding counts as correct when it has the expected category and file and lies within
 two lines of the expected location. The runner uses the same LLM and review settings as
 the bot and calls the real model (free with a local model, paid with a hosted API). The
-report states the model and provider that produced the numbers. The agent rows measure the
-LLM alone; the secret scan is scored on its own row, so a rule hit never hides a model miss.
+agent rows measure the LLM alone; the deterministic secret scan is scored on its own row,
+so a rule hit never hides a model miss.
+
+**Setup of the numbers below:** `qwen2.5-coder:7b` (Q4_K_M) on Ollama 0.40.5, 16k context,
+temperature 0; about 70% of the model on an RTX 4050 Laptop GPU (6 GB), the rest on the CPU.
+Each set was run 3 times with the frozen prompts (commit `a65b45f`); cells show the mean
+and, where the runs differed, the min-max range. Full reports:
+[eval/results.md](eval/results.md), [eval/results_holdout.md](eval/results_holdout.md).
+
+### Tuning set (26 cases)
 
 <!-- eval-results:start -->
-*Not run against a real model yet.* Run the command above with an API key configured to
-fill in this table.
+Model `qwen2.5-coder:7b` (OpenAI-compatible endpoint (local), min confidence 0.5, chunks up to 4000 tokens) · 26 cases, 5 of them clean · 3 runs, mean (min-max) · 2026-10-16
+
+| Agent | Expected | Reported | TP | FP | FN | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| security | 10 | 20.3 (19-21) | 10 | 10.3 (9-11) | 0 | 49% (48%-53%) | 100% | 66% (65%-69%) |
+| performance | 7 | 16 (15-17) | 7 | 9 (8-10) | 0 | 44% (41%-47%) | 100% | 61% (58%-64%) |
+| tests | 5 | 9 | 5 | 4 | 0 | 56% | 100% | 71% |
+| **all LLM agents** | 22 | 45.3 (44-47) | 22 | 23.3 (22-25) | 0 | 49% (47%-50%) | 100% | 65% (64%-67%) |
+| secret scan (rule) | — | 1 | 1 | 0 | — | 100% | — | — |
+
+| Per case | Mean |
+|---|---:|
+| Tokens | 4,882 |
+| Cost (list price) | n/a (local or unpriced model) |
+| Duration (agents in parallel) | 53.3s |
+
+False positives on the 5 clean cases per run: 8.3 (8-9) from the LLM agents, 0 from the secret scan.
 <!-- eval-results:end -->
+
+**Before and after tuning.** The tuning after the first live review (secret scan, enforced
+finding categories, coverage hints for the test reviewer) did not move the aggregate
+numbers. It fixed failure modes seen on a real PR (a missed hardcoded password, the
+performance and test reviewers repeating the security finding) and, along the way, test
+findings anchored at the test file instead of the function. One intermediate version made
+things worse and was reverted; every run is kept in [eval/history/](eval/history/README.md).
+
+| All LLM agents, tuning set | Baseline (`ad63b60`, 1 run) | Final (`a65b45f`, 3 runs) |
+|---|---:|---:|
+| Precision | 48% | 49% (47%-50%) |
+| Recall | 100% | 100% |
+| F1 | 65% | 65% (64%-67%) |
+| False positives on clean cases | 8 | 8.3 (8-9) |
+| Tests agent precision / recall | 56% / 100% | 56% / 100% |
+
+### Held-out set (8 cases, never used for tuning)
+
+| Agent | Expected | Reported | TP | FP | FN | Precision | Recall | F1 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| security | 2 | 6 | 2 | 4 | 0 | 33% | 100% | 50% |
+| performance | 2 | 5.3 (5-6) | 2 | 3.3 (3-4) | 0 | 38% (33%-40%) | 100% | 55% (50%-57%) |
+| tests | 2 | 5 | 2 | 3 | 0 | 40% | 100% | 57% |
+| **all LLM agents** | 6 | 16.3 (16-17) | 6 | 10.3 (10-11) | 0 | 37% (35%-38%) | 100% | 54% (52%-55%) |
+
+False positives on the 2 clean cases per run: 4 from the LLM agents, 0 from the secret scan
+(no held-out case contains a secret).
+
+### What the numbers say
+
+- **Recall is high, precision is low.** With a 7B model, roughly every second finding on
+  the tuning set is wrong, and almost two of three on the held-out set. Precision does not
+  carry over from the tuning set (49% to 37%), recall does (100% on both). Every case has a
+  single, deliberate problem, so 100% recall here is an optimistic upper bound.
+- **Clean code still gets comments**: about 8 false positives over 5 clean cases per run,
+  and 4 over 2 clean held-out cases. The test reviewer flags small helpers as untested; the
+  security and performance reviewers flag harmless constants and assignments.
+- **Test findings can land on the wrong line.** For functions that the PR's own tests
+  already call, the test reviewer tended to report a missing case at the test file instead
+  of the function. A note in its prompt fixed this on the evaluation, but it depends on a
+  small model following that note.
+- **Runs vary**, mostly in the number of false positives (see the ranges). An aborted
+  held-out attempt, interrupted when the machine went to sleep, missed the `list.pop(0)`
+  case in its one complete run; after restarting Ollama all three final runs found it.
+- **Small sets:** 22 + 6 expected findings. One finding moves a held-out precision by
+  several points. Treat the numbers as a regression check, not a benchmark.
 
 ## Security
 
@@ -173,8 +247,9 @@ fill in this table.
 ## Limitations
 
 - **LLM judgement.** Findings can be wrong or miss real problems; the summary labels them
-  as automated suggestions. Small local models are noticeably weaker than large hosted
-  ones; the evaluation shows by how much on your setup. The evaluation measures this on a small, hand-written case set,
+  as automated suggestions. With the default local 7B model about half of the findings are
+  false positives (see [Evaluation](#evaluation)); larger hosted models should do better,
+  but that has not been measured here. The evaluation uses small, hand-written cases,
   which is no substitute for measuring on real pull requests.
 - **Diff-centric context.** Agents see the diff plus a few surrounding lines, not the whole
   repository, so issues that depend on distant code (callers, configuration) can be missed.
