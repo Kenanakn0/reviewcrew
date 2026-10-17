@@ -123,9 +123,9 @@ def test_change_below_a_visible_header_points_at_the_header() -> None:
 @pytest.mark.parametrize(
     "after",
     [
-        "def total(items):\n    n = len(items)\n    return sum(items) / n * 2\n",  # one line
-        "def total(items):\n    count = len(items)\n    return sum(items) / count\n",  # rename
-        "def total(items):\n    n = len(items)\n\n\n    return sum(items) / n\n",  # blank lines
+        "def total(items):\n    n = len(items)\n    return sum(items) / n * 2\n",
+        "def total(items):\n    count = len(items)\n    return sum(items) / count\n",
+        "def total(items):\n    n = len(items)\n\n\n    return sum(items) / n\n",
     ],
     ids=["one-line", "rename", "blank-lines"],
 )

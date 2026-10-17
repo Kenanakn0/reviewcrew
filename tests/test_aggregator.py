@@ -119,8 +119,7 @@ def test_distinct_issues_on_the_same_line_are_kept() -> None:
 
 @pytest.mark.parametrize("secret_line", [3, 7, 8])
 def test_hardcoded_secret_and_injection_nearby_stay_separate(secret_line: int) -> None:
-    # Live PR #1: a hardcoded DB password above a login query built by concatenation.
-    # Different issues must survive as two findings, however close their lines are.
+    # Different issues must stay two findings, however close their lines are.
     secret = finding(line=secret_line, title="Hardcoded database password", severity="critical")
     injection = finding(line=8, end_line=9, title="SQL injection in login query")
 
@@ -151,7 +150,7 @@ def rule(**overrides: object) -> Finding:
     ["Hardcoded database password", "Hardcoded API token", "Hardcoded credentials"],
 )
 def test_llm_finding_on_a_rule_flagged_line_is_the_same_issue(llm_title: str) -> None:
-    # The model may also be off by a line, as qwen2.5-coder:7b was on PR #1.
+    # Small models are often off by a line.
     result = aggregate([rule(line=3), finding(line=4, title=llm_title)])
 
     assert len(result.findings) == 1

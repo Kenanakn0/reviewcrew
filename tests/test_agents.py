@@ -139,8 +139,7 @@ async def test_programming_errors_propagate(chunk: DiffChunk) -> None:
     llm = FakeLLM([RuntimeError("provider bug")])
 
     with pytest.raises(RuntimeError):
-        # Programming errors are not swallowed at the agent level; the orchestrator
-        # (stage 4) isolates agents from each other.
+        # Not swallowed here: the orchestrator is what isolates agents from each other.
         await SecurityAgent(llm).review_chunk(chunk, pr_title="t", chunk_count=1)
 
 

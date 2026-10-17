@@ -13,16 +13,12 @@ from reviewcrew.diff.models import FileDiff
 VISIBLE_PREFIX = 4
 MASK = "[REDACTED]"
 
-# Well-known credential formats.
 _TOKEN_PATTERNS = [
     re.compile(p)
     for p in (
         r"AKIA[0-9A-Z]{16}",  # AWS access key ID
-        # GitHub tokens: classic `ghp_`/`ghs_`/... + 36 alphanumerics, and the stateless
-        # installation tokens `ghs_<app id>_<JWT>` (~520 chars, base64url segments joined by
-        # dots). The digit look-ahead keeps snake_case names such as `ghs_token_from_env`
-        # out; a dot only continues the token when more token characters follow, so a
-        # sentence's final period is not swallowed.
+        # GitHub, classic and stateless (`ghs_<app id>_<JWT>`). Requiring a digit keeps names
+        # like `ghs_token_from_env` out; a final period is not part of the token.
         r"(?:ghp|gho|ghs|ghu|ghr)_(?=[A-Za-z0-9_\-]*[0-9])[A-Za-z0-9_\-]{20,}"
         r"(?:\.[A-Za-z0-9_\-]+)*",
         r"github_pat_[A-Za-z0-9_]{20,}",

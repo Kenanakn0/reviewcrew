@@ -41,12 +41,11 @@ class CoreSettings(BaseSettings):
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
-    # Diff processing.
     diff_max_tokens_per_chunk: int = Field(default=8000, ge=MIN_CHUNK_TOKENS)
     diff_max_changed_lines_per_file: int = Field(default=1000, ge=1)
     diff_context_lines: int = Field(default=5, ge=0)
 
-    # LLM. "openai_compat" covers any OpenAI-compatible endpoint, e.g. a local Ollama.
+    # "openai_compat" covers any OpenAI-compatible endpoint, e.g. a local Ollama.
     llm_provider: Literal["anthropic", "openai_compat"] = "anthropic"
     # Defaults to DEFAULT_ANTHROPIC_MODEL for Anthropic; required for openai_compat.
     llm_model: str = ""
@@ -63,7 +62,6 @@ class CoreSettings(BaseSettings):
 
     llm_max_concurrency: int = Field(default=4, ge=1)  # simultaneous LLM calls per review
 
-    # Review.
     # JSON list in the environment, e.g. REVIEW_AGENTS='["security", "tests"]'.
     review_agents: list[AgentName] = Field(default_factory=_all_agents, min_length=1)
     review_language: Literal["en", "tr"] = "en"
@@ -132,7 +130,6 @@ class Settings(CoreSettings):
     github_api_url: HttpUrl = HttpUrl("https://api.github.com")
     github_timeout_seconds: float = Field(default=30.0, gt=0)
 
-    # Queue (Redis + arq).
     redis_url: RedisDsn = RedisDsn("redis://localhost:6379/0")
     # How long a reviewed (repo, PR, head SHA) is remembered to suppress duplicates.
     review_dedup_ttl_seconds: int = Field(default=7 * 24 * 3600, ge=60)
