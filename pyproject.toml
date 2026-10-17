@@ -1,6 +1,6 @@
 [project]
 name = "reviewcrew"
-version = "0.1.0"
+version = "1.0.0"
 description = "Multi-agent pull request review bot that runs as a GitHub App."
 readme = "README.md"
 authors = [
